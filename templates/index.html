@@ -5,38 +5,32 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>服务端活动日志</title>
     <style>
-        body {
-            font-family: Arial, sans-serif;
-            padding: 20px;
-        }
-        table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-        th, td {
-            padding: 8px;
-            border: 1px solid #ddd;
-            text-align: left;
-        }
-        th {
-            background-color: #f4f4f4;
-        }
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 8px; border: 1px solid #ddd; text-align: left; }
+        th { background-color: #f4f4f4; }
     </style>
 </head>
 <body>
-    <h1>活动日志</h1>
+    <h1>活动日志（最近 200 条）</h1>
     <table>
         <thead>
             <tr>
+                <th>时间(UTC)</th>
                 <th>活动</th>
                 <th>消息</th>
+                <th>来源</th>
+                <th>置信度</th>
             </tr>
         </thead>
         <tbody>
             {% for log in activity_log %}
                 <tr>
+                    <td>{{ log.created_at }}</td>
                     <td>{{ log.activity }}</td>
                     <td>{{ log.message }}</td>
+                    <td>{{ log.source }}</td>
+                    <td>{{ "%.2f"|format(log.confidence) if log.confidence is not none else "-" }}</td>
                 </tr>
             {% endfor %}
         </tbody>
