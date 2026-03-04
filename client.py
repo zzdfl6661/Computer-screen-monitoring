@@ -4,12 +4,14 @@ import time
 import numpy as np
 import cv2
 import pytesseract
-from PIL import Image
 import tkinter as tk
-from tkinter import messagebox, simpledialog
+from tkinter import messagebox
 
-# 设置Tesseract路径
-pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+# 设置Tesseract路径（支持通过环境变量覆盖）
+import os
+_tesseract_cmd = os.getenv("TESSERACT_CMD")
+if _tesseract_cmd:
+    pytesseract.pytesseract.tesseract_cmd = _tesseract_cmd
 
 # 配置类
 class Config:
@@ -110,30 +112,32 @@ def capture_screen():
     return img
 
 
-# 图像分析：判断是否在娱乐
+# 图像分析：返回活动类型和置信度
 def analyze_image(img):
     text = pytesseract.image_to_string(img)
     lower_text = text.lower()
-    
-    # 检查娱乐关键词
-    for keyword in config.entertainment_keywords:
-        if keyword in lower_text:
-            return "entertainment"
-    
-    # 检查学习关键词
-    for keyword in config.study_keywords:
-        if keyword in lower_text:
-            return "study"
-    
-    # 默认返回学习状态，避免误判
-    return "study"
+
+    entertainment_hits = sum(1 for keyword in config.entertainment_keywords if keyword in lower_text)
+    study_hits = sum(1 for keyword in config.study_keywords if keyword in lower_text)
+
+    if entertainment_hits == 0 and study_hits == 0:
+        return "unknown", 0.0
+
+    total_hits = entertainment_hits + study_hits
+    if entertainment_hits > study_hits:
+        return "entertainment", round(entertainment_hits / total_hits, 2)
+    if study_hits > entertainment_hits:
+        return "study", round(study_hits / total_hits, 2)
+
+    return "unknown", 0.5
 
 
 # 向服务端发送请求
-def send_to_server(activity_type):
+def send_to_server(activity_type, source="client", confidence=None):
     url = config.server_url  # 使用配置中的服务端URL
     try:
-        response = requests.post(url, json={"activity": activity_type}, timeout=5)
+        payload = {"activity": activity_type, "source": source, "confidence": confidence}
+        response = requests.post(url, json=payload, timeout=5)
         if response.status_code == 200:
             print("服务器响应:", response.text)
         else:
@@ -145,8 +149,10 @@ def send_to_server(activity_type):
         # 服务端不可用时，本地处理
         if activity_type == "entertainment":
             return {"message": "你正在娱乐，请切换到学习！", "status": "warning"}
-        else:
+        elif activity_type == "study":
             return {"message": "继续保持学习状态！", "status": "good"}
+        else:
+            return {"message": "当前状态不确定，请确认是否在学习", "status": "unknown"}
 
 
 # 显示劝学提示
@@ -286,13 +292,13 @@ def simple_analyze():
                     print(f"检测到娱乐进程: {running_process}")
                     return "entertainment"
         
-        # 默认返回学习状态
-        return "study"
+        # 未命中则返回未知
+        return "unknown"
         
     except Exception as e:
         print(f"进程检测失败: {e}")
-        # 默认返回学习状态，避免误判
-        return "study"
+        # 发生异常返回未知
+        return "unknown"
 
 # 主程序
 def main():
@@ -320,16 +326,19 @@ def main():
             print("\n开始新一轮检查...")
             
             # 根据Tesseract是否可用选择不同的分析方法
+            confidence = 0.0
             if tesseract_available:
                 img = capture_screen()  # 捕获屏幕截图
                 print("屏幕截图成功")
-                activity_type = analyze_image(img)  # 分析是否在娱乐
+                activity_type, confidence = analyze_image(img)  # 分析活动类型
             else:
                 activity_type = simple_analyze()  # 使用进程检测
+                confidence = 0.6 if activity_type in ("study", "entertainment") else 0.0
             
             print(f"活动分析结果: {activity_type}")
             
-            response = send_to_server(activity_type)  # 发送活动类型到服务端
+            source = "ocr" if tesseract_available else "process"
+            response = send_to_server(activity_type, source=source, confidence=confidence)  # 发送活动类型到服务端
             print(f"服务端响应: {response}")
 
             if response.get("status") == "warning":
