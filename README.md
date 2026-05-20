@@ -32,6 +32,8 @@
 | 服务端 | Flask | Web服务 |
 | 服务端 | Jinja2 | 模板渲染 |
 | 通信 | requests | HTTP请求 |
+| 数据存储 | SQLite | 本地数据库 |
+| 配置管理 | JSON | 配置文件 |
 
 ## 快速开始
 
@@ -53,17 +55,39 @@ python server.py
 python client.py
 ```
 
+## 核心功能（更新）
+
+### 数据持久化（新增）
+1. **SQLite数据库存储**：
+   - 新增`database.py`模块，提供`DatabaseManager`类管理活动日志
+   - 支持活动日志的存储、查询、删除等操作
+   - 数据库表结构：id, timestamp, activity, message, source
+
+2. **配置文件持久化**：
+   - 使用`config.json`存储配置信息
+   - 支持检查间隔、服务端URL、关键词等配置的持久化
+   - 提供`ConfigManager`类简化配置管理
+
+3. **客户端和服务端数据库**：
+   - 客户端使用`client_activity_logs.db`存储本地活动记录
+   - 服务端使用`server_activity_logs.db`存储接收到的活动记录
+   - 保持向后兼容性，现有功能不受影响
+
 ## 项目文件结构
 
 ```
 .
-├── client.py          # 客户端代码
-├── server.py          # 服务端代码
-├── templates/         # 模板文件
-│   └── index.html     # 服务端日志显示页面
-├── 服务端活动日志.html  # 活动日志模板
-├── 课题方案.txt        # 项目课题方案
-└── README.md          # 项目说明文档
+├── client.py              # 客户端代码（已更新，支持数据库和配置）
+├── server.py              # 服务端代码（已更新，使用数据库存储）
+├── database.py            # 新增：数据库管理模块
+├── config.json            # 新增：配置文件（自动生成）
+├── client_activity_logs.db  # 新增：客户端数据库（自动生成）
+├── server_activity_logs.db  # 新增：服务端数据库（自动生成）
+├── templates/             # 模板文件
+│   └── index.html         # 服务端日志显示页面（已更新）
+├── 服务端活动日志.html    # 活动日志模板
+├── 课题方案.txt            # 项目课题方案
+└── README.md              # 项目说明文档
 ```
 
 ## 推送代码到GitHub
