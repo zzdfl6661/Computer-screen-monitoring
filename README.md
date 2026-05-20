@@ -10,14 +10,31 @@
 
 - **客户端**：负责屏幕捕获、活动分析、警告提示
 - **服务端**：负责接收和处理客户端请求，记录活动日志
-- **数据存储**：存储活动记录和分析结果
+- **数据存储**：使用SQLite存储活动记录，JSON存储配置
 
 ## 核心功能
 
-1. **智能活动识别**：通过多模态分析（屏幕图像和系统进程）准确识别学生的电脑活动类型
-2. **实时提醒机制**：当检测到娱乐活动时，及时弹出友好的劝学提示
-3. **学习行为分析**：记录和分析学生的学习和娱乐时间分布，提供数据支持
-4. **用户友好界面**：提供简洁直观的配置和监控界面
+### 1. 多模态智能活动识别
+- 通过屏幕图像OCR分析识别活动类型
+- 通过系统进程分析识别活动类型  
+- 通过窗口标题分析识别活动类型
+- 加权融合三种识别结果，提高准确率（进程0.6, OCR0.3, 窗口0.1）
+- 时间窗口分析，连续3次一致才触发提醒，减少误判
+
+### 2. 实时提醒机制
+- 当检测到娱乐活动时，及时弹出友好的劝学提示
+- Windows环境显示GUI警告窗口，其他环境打印提示
+
+### 3. 数据持久化
+- SQLite数据库存储活动日志，服务重启数据不丢失
+- JSON配置文件持久化，支持自定义设置
+- 客户端和服务端独立数据库
+
+### 4. 现代化Web界面
+- 仪表盘展示关键指标（学习记录、娱乐记录、总记录）
+- ECharts数据可视化（学习/娱乐分布饼图、时间趋势折线图）
+- 时间筛选和搜索功能
+- 响应式Bootstrap 5界面
 
 ## 技术栈
 
@@ -31,6 +48,8 @@
 | 客户端 | tkinter | GUI界面 |
 | 服务端 | Flask | Web服务 |
 | 服务端 | Jinja2 | 模板渲染 |
+| 前端 | Bootstrap 5 | UI框架 |
+| 前端 | ECharts | 数据可视化 |
 | 通信 | requests | HTTP请求 |
 | 数据存储 | SQLite | 本地数据库 |
 | 配置管理 | JSON | 配置文件 |
@@ -49,60 +68,46 @@ pip install flask pyautogui requests numpy opencv-python pytesseract pillow psut
 python server.py
 ```
 
+访问 http://localhost:5000 查看Web界面
+
 ### 运行客户端
 
 ```bash
 python client.py
 ```
 
-## 核心功能（更新）
-
-### 数据持久化（新增）
-1. **SQLite数据库存储**：
-   - 新增`database.py`模块，提供`DatabaseManager`类管理活动日志
-   - 支持活动日志的存储、查询、删除等操作
-   - 数据库表结构：id, timestamp, activity, message, source
-
-2. **配置文件持久化**：
-   - 使用`config.json`存储配置信息
-   - 支持检查间隔、服务端URL、关键词等配置的持久化
-   - 提供`ConfigManager`类简化配置管理
-
-3. **客户端和服务端数据库**：
-   - 客户端使用`client_activity_logs.db`存储本地活动记录
-   - 服务端使用`server_activity_logs.db`存储接收到的活动记录
-   - 保持向后兼容性，现有功能不受影响
-
 ## 项目文件结构
 
 ```
 .
-├── client.py              # 客户端代码（已更新，支持数据库和配置）
-├── server.py              # 服务端代码（已更新，使用数据库存储）
-├── database.py            # 新增：数据库管理模块
-├── config.json            # 新增：配置文件（自动生成）
-├── client_activity_logs.db  # 新增：客户端数据库（自动生成）
-├── server_activity_logs.db  # 新增：服务端数据库（自动生成）
+├── client.py              # 客户端代码
+├── server.py              # 服务端代码
+├── database.py            # 数据库管理模块
 ├── templates/             # 模板文件
-│   └── index.html         # 服务端日志显示页面（已更新）
-├── 服务端活动日志.html    # 活动日志模板
+│   └── index.html         # 服务端日志显示页面
+├── config.json            # 配置文件（自动生成）
+├── client_activity_logs.db  # 客户端数据库（自动生成）
+├── server_activity_logs.db  # 服务端数据库（自动生成）
 ├── 课题方案.txt            # 项目课题方案
+├── 优化建议文档.md         # 项目优化建议
 └── README.md              # 项目说明文档
 ```
 
-## 推送代码到GitHub
+## 配置说明
 
-由于网络连接问题，暂时无法直接推送代码到GitHub。当网络连接恢复后，请执行以下命令：
+首次运行会自动生成`config.json`配置文件，包含以下配置项：
 
-```bash
-git push -u origin master
-```
+- `check_interval`: 检查间隔（秒），默认5
+- `server_url`: 服务端URL，默认 http://localhost:5000/check_activity
+- `entertainment_keywords`: 娱乐关键词列表
+- `study_keywords`: 学习关键词列表
 
 ## 注意事项
 
-1. 本系统需要Tesseract-OCR支持，如未安装，会自动切换到进程检测模式
+1. 本系统需要Tesseract-OCR支持，如未安装，会自动切换到进程+窗口标题检测模式
 2. 本系统仅用于学习目的，使用时请注意保护隐私
 3. 系统会定期捕获屏幕截图，可能会影响系统性能
+4. 数据库文件和配置文件会自动生成在项目目录下
 
 ## 许可证
 
