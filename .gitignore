@@ -17,3 +17,7 @@ env/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Auto-generated files
+*.db
+config.json

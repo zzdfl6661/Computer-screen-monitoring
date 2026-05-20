@@ -7,71 +7,22 @@ import pytesseract
 from PIL import Image
 import tkinter as tk
 from tkinter import messagebox, simpledialog
+from database import DatabaseManager, ConfigManager
+import psutil
+import platform
+from collections import deque
 
 # 设置Tesseract路径
-pytesseract.pytesseract.tesseract_cmd = r"D:\Program Files\Tesseract-OCR\tesseract.exe"
+try:
+    pytesseract.pytesseract.tesseract_cmd = r"D:\Program Files\Tesseract-OCR\tesseract.exe"
+except:
+    pass
 
-# 配置类
-class Config:
-    def __init__(self):
-        self.check_interval = 5  # 默认检查间隔（秒）
-        self.server_url = "http://localhost:5000/check_activity"  # 服务端URL
-        
-        # 扩展的娱乐关键词，包含更多游戏和娱乐相关词汇
-        self.entertainment_keywords = [
-            # 英文游戏相关
-            "game", "games", "gaming", "play", "player", "steam", "epic", "origin", "uplay",
-            "battlefield", "call of duty", "csgo", "valorant", "league of legends", "lol",
-            "dota", "minecraft", "fortnite", "pubg", "apex", "overwatch", "world of warcraft",
-            "wow", "fifa", "nba", "nfl", "mlb", "rocket league", "roblox", "among us",
-            # 中文游戏相关
-            "游戏", "网游", "手游", "电竞", "王者荣耀", "英雄联盟", "绝地求生", "和平精英",
-            "原神", "崩坏", "阴阳师", "第五人格", "我的世界", "穿越火线", "地下城与勇士",
-            "梦幻西游", "问道", "剑网3", "天涯明月刀", "逆水寒", "天涯明月刀", "逆水寒",
-            # 视频娱乐相关
-            "video", "videos", "youtube", "bilibili", "netflix", "hulu", "disney+", "hbo",
-            "twitch", "tiktok", "douyin", "kuaishou", "抖音", "快手", "爱奇艺", "优酷",
-            "腾讯视频", "芒果tv", "哔哩哔哩", "b站", "电影", "电视剧", "综艺", "动漫",
-            # 音乐娱乐相关
-            "music", "spotify", "apple music", "netease cloud music", "网易云音乐",
-            "qq音乐", "酷狗音乐", "酷我音乐", "千千音乐", "虾米音乐",
-            # 其他娱乐应用
-            "weibo", "微博", "twitter", "facebook", "instagram", "tiktok", "snapchat",
-            "聊天", "社交", "朋友圈", "微博", "小红书", "知乎", "贴吧", "论坛"
-        ]
-        
-        # 扩展的学习关键词，包含更多学习相关词汇
-        self.study_keywords = [
-            # 英文学习相关
-            "study", "studying", "education", "learning", "course", "courses", "lecture",
-            "lectures", "class", "classes", "homework", "assignment", "assignments",
-            "exam", "exams", "test", "tests", "quiz", "quizzes", "practice", "exercise",
-            "exercises", "math", "science", "physics", "chemistry", "biology", "history",
-            "geography", "literature", "language", "programming", "coding", "python",
-            "java", "javascript", "c++", "html", "css", "database", "algorithm",
-            "tutorial", "tutorials", "documentation", "docs", "reference", "research",
-            "paper", "papers", "article", "articles", "thesis", "dissertation",
-            "note", "notes", "notebook", "textbook", "textbooks", "library", "lib",
-            "university", "college", "school", "student", "teacher", "professor",
-            # 中文学习相关
-            "学习", "作业", "课程", "教材", "课本", "笔记", "复习", "预习", "考试",
-            "测验", "练习", "习题", "数学", "物理", "化学", "生物", "历史", "地理",
-            "语文", "英语", "政治", "编程", "代码", "开发", "教程", "文档", "论文",
-            "研究", "大学", "学院", "学校", "学生", "老师", "教授", "图书馆",
-            "在线教育", "慕课", "网课", "直播课", "录播课", "公开课", "精品课",
-            "题库", "真题", "模拟题", "押题", "知识点", "考点", "重点", "难点",
-            "学习计划", "学习目标", "学习进度", "学习笔记", "学习资料", "学习工具"
-        ]
+# 初始化配置管理器
+config_manager = ConfigManager()
 
-    def update_check_interval(self, interval):
-        self.check_interval = interval
-
-    def update_keywords(self, entertainment_keywords, study_keywords):
-        self.entertainment_keywords = entertainment_keywords
-        self.study_keywords = study_keywords
-
-# 创建全局配置实例
-config = Config()
+# 初始化本地数据库
+local_db = DatabaseManager('client_activity_logs.db')
 
 # 显示配置窗口
 def show_config_window():
@@ -81,15 +32,21 @@ def show_config_window():
     
     # 检查间隔设置
     tk.Label(root, text="检查间隔（秒）：").pack(pady=5)
-    interval_var = tk.StringVar(value=str(config.check_interval))
+    interval_var = tk.StringVar(value=str(config_manager.get('check_interval')))
     tk.Entry(root, textvariable=interval_var).pack(pady=5)
+    
+    # 服务器URL设置
+    tk.Label(root, text="服务端URL：").pack(pady=5)
+    server_url_var = tk.StringVar(value=config_manager.get('server_url'))
+    tk.Entry(root, textvariable=server_url_var, width=40).pack(pady=5)
     
     # 保存按钮
     def save_config():
         try:
             new_interval = int(interval_var.get())
             if new_interval > 0:
-                config.update_check_interval(new_interval)
+                config_manager.set('check_interval', new_interval)
+                config_manager.set('server_url', server_url_var.get())
                 messagebox.showinfo("成功", "配置已保存")
                 root.destroy()
             else:
@@ -115,13 +72,16 @@ def analyze_image(img):
     text = pytesseract.image_to_string(img)
     lower_text = text.lower()
     
+    entertainment_keywords = config_manager.get('entertainment_keywords')
+    study_keywords = config_manager.get('study_keywords')
+    
     # 检查娱乐关键词
-    for keyword in config.entertainment_keywords:
+    for keyword in entertainment_keywords:
         if keyword in lower_text:
             return "entertainment"
     
     # 检查学习关键词
-    for keyword in config.study_keywords:
+    for keyword in study_keywords:
         if keyword in lower_text:
             return "study"
     
@@ -131,7 +91,7 @@ def analyze_image(img):
 
 # 向服务端发送请求
 def send_to_server(activity_type):
-    url = config.server_url  # 使用配置中的服务端URL
+    url = config_manager.get('server_url')
     try:
         response = requests.post(url, json={"activity": activity_type}, timeout=5)
         if response.status_code == 200:
@@ -139,14 +99,20 @@ def send_to_server(activity_type):
         else:
             print("请求失败，状态码:", response.status_code)
 
-        return response.json()  # 返回JSON响应数据
+        result = response.json()
+        # 记录到本地数据库
+        local_db.add_log(activity=activity_type, message=result.get('message'), source='server')
+        return result
     except requests.exceptions.RequestException as e:
         print(f"请求异常: {e}")
         # 服务端不可用时，本地处理
         if activity_type == "entertainment":
-            return {"message": "你正在娱乐，请切换到学习！", "status": "warning"}
+            result = {"message": "你正在娱乐，请切换到学习！", "status": "warning"}
         else:
-            return {"message": "继续保持学习状态！", "status": "good"}
+            result = {"message": "继续保持学习状态！", "status": "good"}
+        # 记录到本地数据库
+        local_db.add_log(activity=activity_type, message=result.get('message'), source='local')
+        return result
 
 
 # 显示劝学提示
@@ -294,6 +260,153 @@ def simple_analyze():
         # 默认返回学习状态，避免误判
         return "study"
 
+
+# 获取活动窗口标题
+def get_active_window_title():
+    """跨平台获取活动窗口标题"""
+    try:
+        system = platform.system()
+        if system == 'Windows':
+            try:
+                import win32gui
+                window = win32gui.GetForegroundWindow()
+                return win32gui.GetWindowText(window)
+            except ImportError:
+                try:
+                    import ctypes
+                    from ctypes import wintypes
+                    user32 = ctypes.WinDLL('user32', use_last_error=True)
+                    user32.GetForegroundWindow.argtypes = ()
+                    user32.GetForegroundWindow.restype = wintypes.HWND
+                    user32.GetWindowTextLengthW.argtypes = (wintypes.HWND,)
+                    user32.GetWindowTextLengthW.restype = ctypes.c_int
+                    user32.GetWindowTextW.argtypes = (wintypes.HWND, wintypes.LPWSTR, ctypes.c_int)
+                    user32.GetWindowTextW.restype = ctypes.c_int
+                    
+                    hwnd = user32.GetForegroundWindow()
+                    length = user32.GetWindowTextLengthW(hwnd)
+                    if length == 0:
+                        return ""
+                    buffer = ctypes.create_unicode_buffer(length + 1)
+                    user32.GetWindowTextW(hwnd, buffer, length + 1)
+                    return buffer.value
+                except Exception as e:
+                    print(f"Windows窗口标题获取失败: {e}")
+                    return ""
+        elif system == 'Darwin':
+            try:
+                from AppKit import NSWorkspace
+                return NSWorkspace.sharedWorkspace().frontmostApplication().localizedName()
+            except ImportError:
+                try:
+                    import subprocess
+                    script = 'tell application "System Events" to get name of first application process whose frontmost is true'
+                    result = subprocess.run(['osascript', '-e', script], capture_output=True, text=True)
+                    return result.stdout.strip()
+                except Exception as e:
+                    print(f"macOS窗口标题获取失败: {e}")
+                    return ""
+        elif system == 'Linux':
+            try:
+                import subprocess
+                result = subprocess.run(['xdotool', 'getactivewindow', 'getwindowname'], 
+                                       capture_output=True, text=True)
+                if result.returncode == 0:
+                    return result.stdout.strip()
+            except Exception as e:
+                print(f"Linux窗口标题获取失败: {e}")
+                return ""
+        return ""
+    except Exception as e:
+        print(f"窗口标题获取失败: {e}")
+        return ""
+
+
+# 分析窗口标题
+def analyze_window_title(title):
+    """通过窗口标题分析活动类型"""
+    lower_title = title.lower()
+    
+    entertainment_keywords = config_manager.get('entertainment_keywords')
+    study_keywords = config_manager.get('study_keywords')
+    
+    for keyword in entertainment_keywords:
+        if keyword in lower_title:
+            return "entertainment"
+    
+    for keyword in study_keywords:
+        if keyword in lower_title:
+            return "study"
+    
+    return "study"
+
+
+# 多模态融合识别
+def multimodal_fusion_analysis(tesseract_available):
+    """
+    多模态融合识别：进程(0.6) + OCR(0.3) + 窗口标题(0.1)
+    当OCR不可用时，降级为进程(0.7) + 窗口标题(0.3)
+    """
+    weights = {
+        'process': 0.6,
+        'ocr': 0.3,
+        'window': 0.1
+    }
+    
+    if not tesseract_available:
+        weights = {
+            'process': 0.7,
+            'window': 0.3
+        }
+    
+    results = {}
+    scores = {}
+    
+    try:
+        results['process'] = simple_analyze()
+    except Exception as e:
+        print(f"进程分析失败: {e}")
+        results['process'] = "study"
+    
+    try:
+        window_title = get_active_window_title()
+        print(f"活动窗口: {window_title}")
+        results['window'] = analyze_window_title(window_title)
+    except Exception as e:
+        print(f"窗口标题分析失败: {e}")
+        results['window'] = "study"
+    
+    if tesseract_available:
+        try:
+            img = capture_screen()
+            results['ocr'] = analyze_image(img)
+        except Exception as e:
+            print(f"OCR分析失败: {e}")
+            results['ocr'] = "study"
+    
+    scores['entertainment'] = 0.0
+    scores['study'] = 0.0
+    
+    for source, result in results.items():
+        if source in weights:
+            if result == 'entertainment':
+                scores['entertainment'] += weights[source]
+            else:
+                scores['study'] += weights[source]
+    
+    print(f"多模态融合结果:")
+    print(f"  进程分析: {results.get('process')}")
+    if tesseract_available:
+        print(f"  OCR分析: {results.get('ocr')}")
+    print(f"  窗口标题: {results.get('window')}")
+    print(f"  娱乐分数: {scores['entertainment']:.2f}")
+    print(f"  学习分数: {scores['study']:.2f}")
+    
+    if scores['entertainment'] > scores['study']:
+        return "entertainment"
+    else:
+        return "study"
+
 # 主程序
 def main():
     print("学习辅助监控系统启动中...")
@@ -304,46 +417,61 @@ def main():
         test_img = np.zeros((100, 100, 3), dtype=np.uint8)
         test_text = pytesseract.image_to_string(test_img)
         tesseract_available = True
-        print("Tesseract-OCR 初始化成功，使用图像识别模式")
+        print("Tesseract-OCR 初始化成功，使用多模态融合识别模式")
     except Exception as e:
         print(f"Tesseract-OCR 初始化失败: {e}")
-        print("将使用降级模式（进程检测）继续运行")
+        print("将使用降级模式（进程+窗口标题检测）继续运行")
+    
+    # 初始化时间窗口队列，保存最近5次检测结果
+    result_queue = deque(maxlen=5)
     
     # 禁用GUI元素，确保在非交互式环境中也能运行
-    print("使用默认配置启动...")
+    print("使用配置文件启动...")
     
+    check_interval = config_manager.get('check_interval')
     # 开始监控循环
-    print(f"学习辅助监控系统已启动，检查间隔: {config.check_interval}秒，按Ctrl+C停止...")
+    print(f"学习辅助监控系统已启动，检查间隔: {check_interval}秒，按Ctrl+C停止...")
     
     try:
         while True:
             print("\n开始新一轮检查...")
             
-            # 根据Tesseract是否可用选择不同的分析方法
-            if tesseract_available:
-                img = capture_screen()  # 捕获屏幕截图
-                print("屏幕截图成功")
-                activity_type = analyze_image(img)  # 分析是否在娱乐
-            else:
-                activity_type = simple_analyze()  # 使用进程检测
+            # 使用多模态融合识别
+            activity_type = multimodal_fusion_analysis(tesseract_available)
             
             print(f"活动分析结果: {activity_type}")
             
-            response = send_to_server(activity_type)  # 发送活动类型到服务端
-            print(f"服务端响应: {response}")
-
-            if response.get("status") == "warning":
-                print(f"显示警告提示: {response['message']}")
-                show_popup(response["message"])  # 如果是警告，弹窗显示提示
+            # 将结果加入队列
+            result_queue.append(activity_type)
             
-            print(f"等待 {config.check_interval} 秒...")
-            time.sleep(config.check_interval)  # 使用配置的检查间隔
+            # 检查是否需要触发提醒
+            should_trigger = False
+            if len(result_queue) >= 3:
+                # 检查最近3次结果是否一致
+                recent_3 = list(result_queue)[-3:]
+                if all(r == recent_3[0] for r in recent_3):
+                    should_trigger = True
+                    print(f"连续3次结果一致: {recent_3[0]}")
+            
+            # 发送到服务器（每次都发送数据）
+            response = send_to_server(activity_type)
+            print(f"响应: {response}")
+
+            # 只有连续3次结果一致才触发提醒
+            if should_trigger and response.get("status") == "warning":
+                print(f"显示警告提示: {response['message']}")
+                show_popup(response["message"])
+            
+            print(f"等待 {check_interval} 秒...")
+            time.sleep(check_interval)
     except KeyboardInterrupt:
         print("监控系统已停止")
+        local_db.close()
     except Exception as e:
         print(f"发生错误: {e}")
         import traceback
         traceback.print_exc()
+        local_db.close()
 
 
 if __name__ == "__main__":
