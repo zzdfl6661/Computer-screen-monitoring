@@ -1,113 +1,245 @@
 # 智能劝学系统
 
-基于屏幕理解的学习行为监控与引导系统
+基于多模态融合分析的学习行为监控与引导系统
 
 ## 项目介绍
 
 智能劝学系统是一款基于屏幕理解的学习行为监控与引导工具，通过实时监控和分析学生的电脑使用行为，智能识别娱乐和学习活动，并在适当时候给予提醒，帮助学生建立良好的学习习惯。
 
+系统采用 **FastAPI + PostgreSQL** 服务端架构和 **模块化客户端** 设计，支持 Docker 容器化部署，具备 JWT 设备认证、多模态融合识别、结构化日志、数据隐私保护等企业级特性。
+
 ## 系统架构
 
-- **客户端**：负责屏幕捕获、活动分析、警告提示
-- **服务端**：负责接收和处理客户端请求，记录活动日志
-- **数据存储**：使用SQLite存储活动记录，JSON存储配置
+```
+┌──────────────────┐         HTTP/JSON          ┌──────────────────────────┐
+│    客户端 (本地)   │ ─────────────────────────→ │    服务端 (Docker)        │
+│                  │   JWT 认证 + 活动上报      │                          │
+│ · 屏幕捕获        │                           │ · FastAPI + SQLAlchemy    │
+│ · 多模态融合识别   │                           │ · PostgreSQL 数据库       │
+│ · 进程/窗口分析    │                           │ · JWT 设备认证            │
+│ · 警告提示        │ ←─────────────────────────│ · 仪表盘 (ECharts)        │
+│                  │      响应/反馈/提醒         │ · 数据隐私保护            │
+└──────────────────┘                           └──────────────────────────┘
+```
 
 ## 核心功能
 
-### 1. 多模态智能活动识别
-- 通过屏幕图像OCR分析识别活动类型
-- 通过系统进程分析识别活动类型  
-- 通过窗口标题分析识别活动类型
-- 加权融合三种识别结果，提高准确率（进程0.6, OCR0.3, 窗口0.1）
+### 1. 多模态融合活动识别
+- **进程分析**（权重0.6）：检测学习/娱乐相关进程
+- **窗口标题分析**（权重0.3）：分析当前活动窗口标题
+- **ONNX 模型分类**（权重0.1）：MobileNetV3-Lite 图像分类（自动降级兼容）
+- 加权融合三种识别结果，提高准确率
 - 时间窗口分析，连续3次一致才触发提醒，减少误判
 
-### 2. 实时提醒机制
-- 当检测到娱乐活动时，及时弹出友好的劝学提示
-- Windows环境显示GUI警告窗口，其他环境打印提示
+### 2. JWT 设备认证
+- 设备自动注册与登录，获取访问令牌
+- 未认证请求返回 401，保障数据安全
 
-### 3. 数据持久化
-- SQLite数据库存储活动日志，服务重启数据不丢失
-- JSON配置文件持久化，支持自定义设置
-- 客户端和服务端独立数据库
+### 3. 数据反馈机制
+- 误报/漏报反馈接口，收集用户标注数据
+- 反馈数据用于后续模型优化
 
-### 4. 现代化Web界面
-- 仪表盘展示关键指标（学习记录、娱乐记录、总记录）
-- ECharts数据可视化（学习/娱乐分布饼图、时间趋势折线图）
-- 时间筛选和搜索功能
-- 响应式Bootstrap 5界面
+### 4. 数据隐私保护
+- 敏感配置加密存储（cryptography.fernet）
+- 数据保留策略，自动清理过期数据（默认30天）
+- HTTPS 传输支持
+
+### 5. 结构化日志
+- Python logging 模块，JSON 格式输出
+- 文件轮转，按日期分割
+
+### 6. 现代化 Web 仪表盘
+- 学习/娱乐统计卡片
+- ECharts 数据可视化（分布饼图、趋势折线图）
+- 活动日志搜索与筛选
+- 响应式 Bootstrap 5 界面
 
 ## 技术栈
 
-| 类别 | 技术/库 | 用途 |
-|------|---------|------|
-| 客户端 | Python | 核心编程语言 |
-| 客户端 | pyautogui | 屏幕捕获 |
-| 客户端 | pytesseract | OCR文字识别 |
-| 客户端 | OpenCV | 图像处理 |
-| 客户端 | psutil | 进程管理 |
-| 客户端 | tkinter | GUI界面 |
-| 服务端 | Flask | Web服务 |
-| 服务端 | Jinja2 | 模板渲染 |
-| 前端 | Bootstrap 5 | UI框架 |
-| 前端 | ECharts | 数据可视化 |
-| 通信 | requests | HTTP请求 |
-| 数据存储 | SQLite | 本地数据库 |
-| 配置管理 | JSON | 配置文件 |
+| 类别 | 技术 | 用途 |
+|------|------|------|
+| 服务端框架 | FastAPI | 异步 Web 服务，自动生成 OpenAPI 文档 |
+| ORM | SQLAlchemy | 数据库操作 |
+| 数据库 | PostgreSQL | 生产级关系型数据库 |
+| 认证 | python-jose (JWT) | 设备认证与令牌管理 |
+| 加密 | cryptography | 配置加密存储 |
+| 客户端截图 | pyautogui | 屏幕捕获 |
+| 客户端 OCR | pytesseract | 文字识别 |
+| 客户端图像处理 | OpenCV | 图像预处理 |
+| 模型推理 | onnxruntime | ONNX 模型推理 |
+| 进程管理 | psutil | 进程检测 |
+| GUI 提示 | tkinter | Windows 警告窗口 |
+| 前端 UI | Bootstrap 5 | 响应式界面 |
+| 数据可视化 | ECharts | 图表展示 |
+| 部署 | Docker + Docker Compose | 容器化部署 |
+| 日志 | python-json-logger | 结构化日志 |
 
 ## 快速开始
 
-### 安装依赖
+### 方式一：Docker 部署（推荐）
 
-```bash
-pip install flask pyautogui requests numpy opencv-python pytesseract pillow psutil
+#### 前置条件
+- 已安装 Docker Desktop
+- 已安装 Python 3.11+（客户端需本地运行）
+
+#### 1. 配置环境变量
+在项目根目录创建 `.env` 文件：
+```env
+DB_USER=postgres
+DB_PASSWORD=your_secure_password
+DB_NAME=learning_app
+JWT_SECRET_KEY=your_jwt_secret_key_here
+APP_ENV=development
 ```
 
-### 运行服务端
-
-```bash
-python server.py
+#### 2. 启动服务端容器
+```powershell
+docker compose up -d
 ```
 
-访问 http://localhost:5000 查看Web界面
+#### 3. 验证服务端
+访问 http://localhost:5000 查看仪表盘，访问 http://localhost:5000/docs 查看 API 文档。
 
-### 运行客户端
+#### 4. 启动客户端
+```powershell
+python main.py
+```
 
+### 方式二：本地直接运行
+
+#### 1. 安装依赖
 ```bash
-python client.py
+pip install -r requirements.txt
+```
+
+#### 2. 启动服务端
+```bash
+python fastapi_server.py
+```
+
+#### 3. 启动客户端
+```bash
+python main.py
 ```
 
 ## 项目文件结构
 
 ```
 .
-├── client.py              # 客户端代码
-├── server.py              # 服务端代码
-├── database.py            # 数据库管理模块
-├── templates/             # 模板文件
-│   └── index.html         # 服务端日志显示页面
-├── config.json            # 配置文件（自动生成）
-├── client_activity_logs.db  # 客户端数据库（自动生成）
-├── server_activity_logs.db  # 服务端数据库（自动生成）
-├── 课题方案.txt            # 项目课题方案
-├── 优化建议文档.md         # 项目优化建议
-└── README.md              # 项目说明文档
+├── main.py                        # 客户端入口
+├── fastapi_server.py              # 服务端启动入口
+├── logger.py                      # 结构化日志配置
+├── database.py                    # 客户端数据库管理
+├── ssl_config.py                  # HTTPS 配置
+├── requirements.txt               # Python 依赖
+├── Dockerfile                     # 服务端镜像构建
+├── docker-compose.yml             # 容器编排配置
+├── .dockerignore                  # Docker 构建忽略
+├── .gitignore                     # Git 忽略
+│
+├── app/                           # 服务端应用
+│   ├── main.py                    # FastAPI 应用入口
+│   ├── database.py                # SQLAlchemy 数据库连接
+│   ├── models.py                  # 数据模型
+│   ├── auth/                      # JWT 认证模块
+│   │   ├── routes.py              # 认证路由（注册/登录）
+│   │   ├── dependencies.py        # 认证依赖
+│   │   ├── models.py              # 用户/设备模型
+│   │   ├── schemas.py             # Pydantic 模型
+│   │   └── utils.py               # JWT 工具
+│   ├── routes/                    # API 路由
+│   │   ├── activity.py            # 活动检查接口
+│   │   ├── stats.py               # 统计数据接口
+│   │   ├── distribution.py        # 分布数据接口
+│   │   ├── trend.py               # 趋势数据接口
+│   │   ├── search.py              # 日志搜索接口
+│   │   ├── feedback.py            # 反馈数据接口
+│   │   └── privacy.py             # 隐私管理接口
+│   └── utils/
+│       └── data_retention.py      # 数据保留策略
+│
+├── client_package/                # 客户端模块
+│   ├── capture.py                 # 屏幕捕获
+│   ├── classify.py                # 多模态融合分类
+│   ├── report.py                  # 数据上报与设备认证
+│   ├── ui.py                      # GUI 警告提示
+│   ├── feedback.py                # 反馈上报
+│   ├── config.py                  # 配置管理（加密存储）
+│   └── model/                     # ONNX 模型模块
+│       ├── onnx_classifier.py     # ONNX 推理器
+│       ├── image_preprocessor.py  # 图像预处理
+│       └── model_manager.py       # 模型管理
+│
+├── templates/
+│   └── index.html                 # 仪表盘页面
+│
+└── models/
+    └── model_config.json          # 模型配置
 ```
 
 ## 配置说明
 
-首次运行会自动生成`config.json`配置文件，包含以下配置项：
+### 客户端配置
+首次运行自动生成 `config.json`，主要配置项：
 
-- `check_interval`: 检查间隔（秒），默认5
-- `server_url`: 服务端URL，默认 http://localhost:5000/check_activity
-- `entertainment_keywords`: 娱乐关键词列表
-- `study_keywords`: 学习关键词列表
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| `check_interval` | 5 | 检查间隔（秒） |
+| `server_url` | `http://localhost:5000/check_activity` | 服务端地址 |
+| `device_token` | 自动生成 | 设备认证令牌 |
+| `study_keywords` | [...] | 学习进程关键词 |
+| `entertainment_keywords` | [...] | 娱乐进程关键词 |
+
+### Docker 部署配置
+
+| 环境变量 | 说明 |
+|----------|------|
+| `DATABASE_URL` | PostgreSQL 连接字符串 |
+| `JWT_SECRET_KEY` | JWT 签名密钥 |
+| `APP_ENV` | 运行环境（development/production） |
+| `DB_USER` | 数据库用户名 |
+| `DB_PASSWORD` | 数据库密码 |
+| `DB_NAME` | 数据库名称 |
+
+## 常用命令
+
+```powershell
+# Docker 部署
+docker compose up -d          # 启动并创建容器
+docker compose start          # 启动已停止的容器
+docker compose stop           # 停止容器（保留）
+docker compose down          # 停止并移除容器
+docker compose up -d --build # 重新构建镜像并启动
+
+# 客户端
+python main.py                # 启动客户端
+
+# 服务端（本地运行）
+python fastapi_server.py      # 启动服务端
+```
+
+## API 端点
+
+| 方法 | 路径 | 说明 | 认证 |
+|------|------|------|------|
+| GET | `/` | 仪表盘页面 | 公开 |
+| GET | `/health` | 健康检查 | 公开 |
+| GET | `/docs` | API 文档（Swagger） | 公开 |
+| POST | `/check_activity` | 上报活动数据 | 设备令牌 |
+| GET | `/api/stats` | 统计数据 | 公开 |
+| GET | `/api/distribution` | 活动分布 | 公开 |
+| GET | `/api/trend` | 时间趋势 | 公开 |
+| GET | `/api/search` | 日志搜索 | 公开 |
+| POST | `/auth/device/register` | 设备注册 | 公开 |
+| POST | `/auth/device/login` | 设备登录 | 公开 |
 
 ## 注意事项
 
-1. 本系统需要Tesseract-OCR支持，如未安装，会自动切换到进程+窗口标题检测模式
-2. 本系统仅用于学习目的，使用时请注意保护隐私
-3. 系统会定期捕获屏幕截图，可能会影响系统性能
-4. 数据库文件和配置文件会自动生成在项目目录下
+1. 客户端需要本地运行（需访问屏幕、进程），不支持容器化
+2. 客户端可选依赖 Tesseract-OCR 和 onnxruntime，未安装时自动降级到进程+窗口检测模式
+3. Docker 部署的服务端通过 `http://localhost:5000` 访问
+4. `.env` 文件包含敏感信息，已在 `.gitignore` 中排除，请勿提交
+5. 数据库使用 PostgreSQL（Docker 部署）或 SQLite（本地运行）
 
 ## 许可证
 
