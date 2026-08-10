@@ -1,0 +1,11 @@
+{
+  "model_name": "mobilenetv3-lite",
+  "version": "1.0.0",
+  "download_url": "https://trae-api-cn.mchost.guru/api/ide/v1/model_download/",
+  "model_filename": "mobilenetv3-lite.onnx",
+  "checksum": "",
+  "labels": ["study", "gaming", "video", "social", "idle"],
+  "input_size": [224, 224],
+  "mean": [0.485, 0.456, 0.406],
+  "std": [0.229, 0.224, 0.225]
+}

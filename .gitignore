@@ -1,9 +1,11 @@
 # IDE files
 .idea/
 *.iml
+.trae/
 
 # Log files
 debug.log
+logs/
 
 # Python files
 __pycache__/
@@ -13,6 +15,7 @@ __pycache__/
 .env
 venv/
 env/
+.encryption_key
 
 # OS files
 .DS_Store
@@ -21,3 +24,7 @@ Thumbs.db
 # Auto-generated files
 *.db
 config.json
+
+# Doc files
+*.doc
+*.pdf
