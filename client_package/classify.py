@@ -65,7 +65,6 @@ DEFAULT_WEIGHTS = {
     "process": 0.45,
     "title": 0.30,
     "text_llm": 0.20,
-    "vlm": 0.30,
 }
 DEFAULT_CONF_THRESHOLD = 0.45
 

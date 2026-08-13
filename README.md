@@ -33,11 +33,12 @@
 |------|------|------|
 | 前台进程 | 0.45 | **只看前台窗口所属进程**（后台 QQ/Steam++/抖音守护等不参与判定）；浏览器/java 视为中性交给标题；边界感知匹配（`lib` 不误命中 `bilibili`、`idea` 能配 `idea64`） |
 | 窗口标题+站点声誉 | 0.30 | 识别站点（coursera/知乎/B站/抖音…）：学习站→学习、娱乐站→娱乐、两栖站→关键词二次判定 |
-| 本地文本 LLM | 0.20 | 可选（`enable_text_llm`），对 (进程,标题,站点) 语义判级，离线回退规则 |
-| 服务端视觉兜底 | 0.30 | 可选（`enable_server_vision`，默认开）：仅「不确定」样本上传截图→服务端 OCR 判级 |
-| 端侧 VLM | 0.30 | 可选（`enable_vlm`，默认关）：本地 Ollama VLM 兜底（需自行部署，仅不确定时触发） |
+| 本地文本 LLM | 0.20 | 可选（`enable_text_llm`，默认关），对 (进程,标题,站点) 语义判级，离线回退规则 |
 
-- **融合**：信号贡献 = 权重 × 自身置信度，归一化后 argmax；赢家分数 < `fusion_min_confidence`（默认 0.40）或与前一名差距 < `fusion_margin`（默认 0.05）→ 判「不确定」→ 触发视觉兜底；否则保守返回 idle（不误报）。
+> **权重说明**：以上权重是**相对重要度**而非概率，**无需和为 1**——融合时每个信号贡献 = 权重 × 自身置信度，再对总证据**归一化**后取最大类。
+
+- **融合**：信号贡献 = 权重 × 自身置信度，归一化后 argmax；赢家分数 < `fusion_min_confidence`（默认 0.40）或与前一名差距 < `fusion_margin`（默认 0.05）→ 判「不确定」。
+- **视觉兜底（后置覆盖，不参与加权融合）**：仅「不确定」样本触发——`enable_server_vision`（默认开）上传截图到服务端 OCR 判级，或 `enable_vlm`（默认关）本地 Ollama VLM；结果置信度 ≥ `confidence_threshold`（默认 0.45）时**直接采纳**为最终判定。
 - 连续 3 次一致才弹提醒，减少误判。
 
 ### 2. JWT 设备认证
@@ -155,7 +156,7 @@ python fastapi_server.py
 |--------|--------|------|
 | `check_interval` | 5 | 检查间隔（秒） |
 | `server_url` | `http://127.0.0.1:5000/check_activity` | 服务端地址（用 127.0.0.1 避免系统代理干扰 localhost） |
-| `fusion_weights` | `{process:0.45, title:0.30, text_llm:0.20, vlm:0.30}` | 信号权重 |
+| `fusion_weights` | `{process:0.45, title:0.30, text_llm:0.20}` | 信号权重（相对权重，融合时归一化，无需和为 1） |
 | `confidence_threshold` | 0.45 | 视觉兜底结果采纳阈值 |
 | `fusion_min_confidence` | 0.40 | 「不确定」下限 |
 | `fusion_margin` | 0.05 | 「不确定」前两名最小差距 |
