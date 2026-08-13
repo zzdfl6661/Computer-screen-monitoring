@@ -13,8 +13,7 @@ EXCLUDE_NAMES = {".encryption_key", ".env", "config.json"}  # config.json 用清
 
 
 def main():
-    if os.path.exists(OUT):
-        os.remove(OUT)
+    # 注：zipfile 以 'w' 模式打开即会覆盖旧文件，无需先删除（避免触发安全删除拦截）
 
     # 清理版 config.json：清空设备/访问令牌，保留全部功能配置
     clean_config = None

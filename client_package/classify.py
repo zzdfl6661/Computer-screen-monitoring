@@ -359,8 +359,9 @@ def classify_from_signals(running_processes, title,
 
     if uncertain and use_vlm and (_cfg('enable_vlm', False) or _cfg('enable_server_vision', False)):
         try:
+            from .capture import capture_screen
             from .vlm_classifier import VLMClassifier
-            img = _capture()
+            img = capture_screen()
             vlm = VLMClassifier()
             vcat, vconf = vlm.classify(img)
             breakdown['vlm'] = (vcat, vconf, 'fallback')
