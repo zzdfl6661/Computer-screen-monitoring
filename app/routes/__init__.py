@@ -5,6 +5,7 @@ from .trend import router as trend_router
 from .search import router as search_router
 from .feedback import router as feedback_router
 from .privacy import router as privacy_router
+from .vision import router as vision_router
 
 activity = activity_router
 stats = stats_router
@@ -13,3 +14,4 @@ trend = trend_router
 search = search_router
 feedback = feedback_router
 privacy = privacy_router
+vision = vision_router

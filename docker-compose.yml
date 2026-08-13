@@ -1,9 +1,7 @@
-version: '3.8'
-
 services:
-  web:
+  backend:
     build: .
-    container_name: learning-app-web
+    container_name: learning-app-backend
     ports:
       - "5000:5000"
     environment:
@@ -15,11 +13,10 @@ services:
         condition: service_healthy
     volumes:
       - ./logs:/app/logs
-      - ./.env:/app/.env
     networks:
       - learning-app-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:5000/health').status == 200 else 1)"]
       interval: 30s
       timeout: 3s
       retries: 3

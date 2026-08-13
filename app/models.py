@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime
+from sqlalchemy import Column, Integer, String, DateTime, Text, Float
 from .database import Base
 from datetime import datetime
 
@@ -35,3 +35,18 @@ class DataRetentionPolicy(Base):
     description = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class ImageAnalysis(Base):
+    """服务端视觉分析（OCR）记录：图片入库 + OCR 文本 + 判定结果。"""
+    __tablename__ = "image_analyses"
+
+    id = Column(Integer, primary_key=True, index=True)
+    device_id = Column(String, nullable=False)
+    image_base64 = Column(Text, nullable=False)          # 384px JPEG 的 base64
+    ocr_text = Column(Text, nullable=True)               # OCR 提取的界面文字
+    activity = Column(String, nullable=False)            # 判定结果 study/entertainment/idle
+    confidence = Column(Float, nullable=True)
+    window_title = Column(String, nullable=True)
+    process = Column(String, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)

@@ -1,15 +1,4 @@
-fastapi==0.115.0
-uvicorn==0.31.0
-sqlalchemy==2.0.36
-pydantic==2.9.2
-pydantic-settings==2.5.0
-email-validator
-jinja2==3.1.4
-python-json-logger==2.0.7
-python-jose[cryptography]
-passlib[bcrypt]
-cryptography>=43.0.0
-psycopg2-binary>=2.9.0
-onnxruntime>=1.16.0
-opencv-python>=4.8.0
-numpy>=1.26.0
+# 全量依赖 = 服务端 + 客户端。
+# 只部署服务端（docker）用 requirements-server.txt；只跑桌面客户端用 requirements-client.txt。
+-r requirements-server.txt
+-r requirements-client.txt

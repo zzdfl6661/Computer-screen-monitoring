@@ -1,0 +1,60 @@
+======================================================================
+学习/娱乐分类器 前后对比评测
+======================================================================
+样本数: 48
+
+旧分类器准确率 :  54.2%   (26/48)
+新分类器准确率 : 100.0%   (48/48)
+提升           : +45.8 个百分点
+
+-- 旧分类器 各类召回 --
+         study:   8.7%
+  entertainment:  95.0%
+          idle: 100.0%
+-- 新分类器 各类召回 --
+         study: 100.0%
+  entertainment: 100.0%
+          idle: 100.0%
+
+-- 旧分类器 混淆矩阵 --
+                预测
+                     study entertainment         idle
+实际    study             2            4           17
+实际 entertainment             0           19            1
+实际     idle             0            0            5
+
+-- 新分类器 混淆矩阵 --
+                预测
+                     study entertainment         idle
+实际    study            23            0            0
+实际 entertainment             0           20            0
+实际     idle             0            0            5
+
+-- 由错转对 (旧错→新对): 22 个 --
+  [S1] 真值=study  旧=idle -> 新=study  | main.py - Visual Studio Code
+  [S2] 真值=study  旧=idle -> 新=study  | 两数之和 - LeetCode
+  [S3] 真值=study  旧=idle -> 新=study  | 机器学习 吴恩达 coursera
+  [S4] 真值=study  旧=entertainment -> 新=study  | 微积分 网课 bilibili
+  [S5] 真值=study  旧=entertainment -> 新=study  | 知乎 高考数学解题思路
+  [S6] 真值=study  旧=idle -> 新=study  | Python 基础教程 菜鸟教程
+  [S8] 真值=study  旧=idle -> 新=study  | 中国大学MOOC 高等数学
+  [S9] 真值=study  旧=idle -> 新=study  | 腾讯会议 数学直播课
+  [S10] 真值=study  旧=idle -> 新=study  | 微积分教材.pdf
+  [S11] 真值=study  旧=idle -> 新=study  | arXiv 深度学习论文
+  [S12] 真值=study  旧=idle -> 新=study  | 考研真题 百度文库
+  [S14] 真值=study  旧=entertainment -> 新=study  | B站 考研政治 复习
+  [S15] 真值=study  旧=idle -> 新=study  | 网易云课堂 Python 入门
+  [S16] 真值=study  旧=idle -> 新=study  | MyProject - IntelliJ IDEA
+  [S17] 真值=study  旧=idle -> 新=study  | github 项目 README
+  [S18] 真值=study  旧=idle -> 新=study  | Wikipedia 量子力学
+  [S19] 真值=study  旧=idle -> 新=study  | 成绩统计.xlsx - Excel
+  [S20] 真值=study  旧=idle -> 新=study  | juejin 前端学习笔记
+  [S21] 真值=study  旧=entertainment -> 新=study  | B站 学习 视频 教程
+  [S22] 真值=study  旧=idle -> 新=study  | 高等数学 课程 复习 笔记
+  [S23] 真值=study  旧=idle -> 新=study  | game_utils.py - Visual Studio Code
+  [E7] 真值=entertainment  旧=idle -> 新=entertainment  | 微信
+
+-- 回归 (旧对→新错): 0 个 --
+
+-- 仍双双错误: 0 个 --
+======================================================================

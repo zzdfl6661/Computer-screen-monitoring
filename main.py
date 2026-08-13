@@ -1,5 +1,3 @@
-import pytesseract
-import numpy as np
 import time
 from collections import deque
 import logging
@@ -21,17 +19,7 @@ local_db = DatabaseManager('client_activity_logs.db')
 
 def main():
     logger.info("学习辅助监控系统启动中...")
-    
-    tesseract_available = False
-    try:
-        test_img = np.zeros((100, 100, 3), dtype=np.uint8)
-        test_text = pytesseract.image_to_string(test_img)
-        tesseract_available = True
-        logger.info("Tesseract-OCR 初始化成功，使用多模态融合识别模式")
-    except Exception as e:
-        logger.warning(f"Tesseract-OCR 初始化失败: {e}")
-        logger.info("将使用降级模式（进程+窗口标题检测）继续运行")
-    
+
     result_queue = deque(maxlen=5)
     
     logger.info("使用配置文件启动...")
@@ -43,7 +31,7 @@ def main():
         while True:
             logger.info("开始新一轮检查...")
             
-            activity_type = multimodal_fusion_analysis(tesseract_available)
+            activity_type = multimodal_fusion_analysis()
             
             logger.info(f"活动分析结果: {activity_type}")
             

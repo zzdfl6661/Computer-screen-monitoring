@@ -28,6 +28,15 @@
         <div class="row mb-4">
             <div class="col-12">
                 <h1 class="display-5 fw-bold text-center">📊 活动监控仪表盘</h1>
+                <div class="text-center mt-2">
+                    <label class="form-label fw-semibold">统计范围：</label>
+                    <select id="period-select" class="form-select form-select-sm d-inline-block" style="width: 170px;" onchange="applyPeriod()">
+                        <option value="1" selected>今天</option>
+                        <option value="7">最近 7 天</option>
+                        <option value="30">最近 30 天</option>
+                        <option value="0">全部历史</option>
+                    </select>
+                </div>
             </div>
         </div>
 
@@ -35,7 +44,7 @@
             <div class="col-md-4">
                 <div class="card stat-card shadow-sm bg-success text-white">
                     <div class="card-body text-center py-4">
-                        <h5 class="card-title mb-2">📚 今日学习记录</h5>
+                        <h5 class="card-title mb-2">📚 学习记录</h5>
                         <h2 class="display-4 fw-bold" id="study-count">0</h2>
                     </div>
                 </div>
@@ -43,7 +52,7 @@
             <div class="col-md-4">
                 <div class="card stat-card shadow-sm bg-warning text-dark">
                     <div class="card-body text-center py-4">
-                        <h5 class="card-title mb-2">🎮 今日娱乐记录</h5>
+                        <h5 class="card-title mb-2">🎮 娱乐记录</h5>
                         <h2 class="display-4 fw-bold" id="entertainment-count">0</h2>
                     </div>
                 </div>
@@ -169,10 +178,14 @@
 
         document.addEventListener('DOMContentLoaded', function() {
             initCharts();
-            loadStats();
-            loadPieChart();
+            loadStats(periodDays());
+            loadPieChart(periodDays());
             loadTrendChart();
         });
+
+        function periodDays() {
+            return parseInt(document.getElementById('period-select').value);
+        }
 
         function initCharts() {
             pieChart = echarts.init(document.getElementById('pie-chart'));
@@ -184,9 +197,9 @@
             });
         }
 
-        async function loadStats() {
+        async function loadStats(days) {
             try {
-                const response = await fetch('/api/stats');
+                const response = await fetch(days === undefined ? '/api/stats' : `/api/stats?days=${days}`);
                 const data = await response.json();
                 document.getElementById('study-count').textContent = data.study_count;
                 document.getElementById('entertainment-count').textContent = data.entertainment_count;
@@ -196,9 +209,9 @@
             }
         }
 
-        async function loadPieChart() {
+        async function loadPieChart(days) {
             try {
-                const response = await fetch('/api/distribution');
+                const response = await fetch(days === undefined ? '/api/distribution' : `/api/distribution?days=${days}`);
                 const data = await response.json();
                 
                 const seriesData = [];
@@ -246,10 +259,10 @@
             }
         }
 
-        async function loadTrendChart() {
+        async function loadTrendChart(hours) {
             try {
-                const hours = document.getElementById('trend-hours').value;
-                const response = await fetch(`/api/trend?hours=${hours}`);
+                const h = hours || document.getElementById('trend-hours').value;
+                const response = await fetch(`/api/trend?hours=${h}`);
                 const data = await response.json();
 
                 const option = {
@@ -373,9 +386,42 @@
         }
 
         function refreshData() {
-            loadStats();
-            loadPieChart();
+            loadStats(periodDays());
+            loadPieChart(periodDays());
             loadTrendChart();
+        }
+
+        function applyPeriod() {
+            const days = periodDays();
+            const hoursMap = {1: 24, 7: 168, 30: 720, 0: 720};
+            const hours = hoursMap[days] || 24;
+            document.getElementById('trend-hours').value = hours;
+            loadStats(days);
+            loadPieChart(days);
+            loadTrendChart(hours);
+            loadLogsForPeriod(days);
+        }
+
+        function fmtDate(d) {
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        }
+
+        async function loadLogsForPeriod(days) {
+            try {
+                let url = '/api/search?';
+                if (days && days > 0) {
+                    const end = new Date();
+                    const start = new Date(Date.now() - (days - 1) * 86400000);
+                    url += `start_date=${fmtDate(start)}&end_date=${fmtDate(end)}`;
+                } else {
+                    url += 'start_date=2000-01-01';
+                }
+                const response = await fetch(url);
+                const logs = await response.json();
+                renderLogTable(logs);
+            } catch (error) {
+                console.error('Error loading logs:', error);
+            }
         }
 
         setInterval(refreshData, 30000);

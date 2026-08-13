@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
-from app.models import ActivityLog, Feedback, DataRetentionPolicy
+from app.models import ActivityLog, Feedback, ImageAnalysis, DataRetentionPolicy
 from logger import setup_logger
 import threading
 import time
@@ -45,17 +45,24 @@ def cleanup_old_data(db: Session, retention_days: int = None):
     feedback_deleted = db.query(Feedback).filter(
         Feedback.created_at < cutoff_date
     ).delete(synchronize_session=False)
+
+    # 服务端视觉分析记录（含入库截图）同样按保留期清理，避免截图无限增长
+    image_deleted = db.query(ImageAnalysis).filter(
+        ImageAnalysis.created_at < cutoff_date
+    ).delete(synchronize_session=False)
     
     db.commit()
     
-    if activity_deleted > 0 or feedback_deleted > 0:
-        logger.info(f"数据清理完成: 删除活动日志 {activity_deleted} 条, 删除反馈记录 {feedback_deleted} 条, 保留期限 {retention_days} 天")
+    if activity_deleted > 0 or feedback_deleted > 0 or image_deleted > 0:
+        logger.info(f"数据清理完成: 活动日志 {activity_deleted} 条, 反馈 {feedback_deleted} 条, "
+                    f"视觉分析 {image_deleted} 条, 保留期限 {retention_days} 天")
     else:
         logger.debug(f"数据清理: 无需删除, 保留期限 {retention_days} 天")
     
     return {
         'activity_logs_deleted': activity_deleted,
         'feedback_deleted': feedback_deleted,
+        'image_analyses_deleted': image_deleted,
         'retention_days': retention_days
     }
 

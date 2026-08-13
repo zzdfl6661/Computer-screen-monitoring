@@ -1,6 +1,10 @@
 import json
 import os
-from cryptography.fernet import Fernet
+
+try:
+    from cryptography.fernet import Fernet
+except ImportError:
+    Fernet = None
 
 try:
     from cryptography.exceptions import InvalidToken
@@ -26,6 +30,8 @@ def _load_or_create_key():
 def encrypt_config(value, key=None):
     if key is None:
         key = _load_or_create_key()
+    if Fernet is None:
+        return value
     fernet = Fernet(key)
     return fernet.encrypt(value.encode()).decode()
 
@@ -34,6 +40,8 @@ def decrypt_config(encrypted_value, key=None):
         return ''
     if key is None:
         key = _load_or_create_key()
+    if Fernet is None:
+        return encrypted_value
     fernet = Fernet(key)
     try:
         return fernet.decrypt(encrypted_value.encode()).decode()
@@ -49,7 +57,7 @@ class ConfigManager:
     def _load_config(self):
         default_config = {
             'check_interval': 5,
-            'server_url': 'http://localhost:5000/check_activity',
+            'server_url': 'http://127.0.0.1:5000/check_activity',
             'device_token': '',
             'access_token': '',
             'entertainment_keywords': [

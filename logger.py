@@ -12,16 +12,6 @@ def setup_logger(name='app', log_level=logging.DEBUG):
     if logger.handlers:
         return logger
 
-    os.makedirs('logs', exist_ok=True)
-
-    file_handler = RotatingFileHandler(
-        'logs/app.log',
-        maxBytes=10 * 1024 * 1024,
-        backupCount=7,
-        encoding='utf-8'
-    )
-    file_handler.setLevel(log_level)
-
     console_handler = logging.StreamHandler()
     console_handler.setLevel(log_level)
 
@@ -40,10 +30,24 @@ def setup_logger(name='app', log_level=logging.DEBUG):
         '%(asctime)s - %(levelname)s - %(message)s'
     )
 
-    file_handler.setFormatter(json_formatter)
     console_handler.setFormatter(console_formatter)
-
-    logger.addHandler(file_handler)
     logger.addHandler(console_handler)
+
+    # 文件日志尽力而为：非 root 或日志目录不可写时不崩，仅退回控制台日志（容器友好）
+    try:
+        os.makedirs('logs', exist_ok=True)
+        file_handler = RotatingFileHandler(
+            'logs/app.log',
+            maxBytes=10 * 1024 * 1024,
+            backupCount=7,
+            encoding='utf-8'
+        )
+        file_handler.setLevel(log_level)
+        file_handler.setFormatter(json_formatter)
+        logger.addHandler(file_handler)
+    except (OSError, PermissionError) as e:
+        logging.getLogger('logger_setup').warning(
+            f"无法写入日志文件，仅使用控制台日志: {e}"
+        )
 
     return logger

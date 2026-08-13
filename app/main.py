@@ -5,7 +5,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .database import engine, get_db, SessionLocal
 from .models import Base, ActivityLog
-from .routes import activity, stats, distribution, trend, search, feedback, privacy
+from .routes import activity, stats, distribution, trend, search, feedback, privacy, vision
 from .auth import routes as auth_routes
 from .auth.models import User, Device
 from .utils.data_retention import start_auto_cleanup, cleanup_old_data
@@ -27,6 +27,7 @@ app.include_router(trend)
 app.include_router(search)
 app.include_router(feedback)
 app.include_router(privacy)
+app.include_router(vision)
 
 try:
     db = SessionLocal()
