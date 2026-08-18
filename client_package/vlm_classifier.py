@@ -28,7 +28,7 @@ VLM_PROMPT = (
 )
 
 _TIMEOUT = 15
-_DOWNSAMPLE = 384
+_DOWNSAMPLE = 768  # 服务端 OCR 对小字/深色界面更友好；仍远小于原图，控制带宽
 
 
 class VLMClassifier:
@@ -46,6 +46,13 @@ class VLMClassifier:
             if self.backend == 'ollama':
                 return self._classify_ollama(image)
             logger.warning(f"未知的 vlm_backend: {self.backend}")
+            return (None, 0.0)
+        except urllib.error.URLError as e:
+            # 最常见的根因：后端 Docker 容器没启动/被停止，客户端发 /analyze_image 连接被拒
+            logger.warning(
+                f"⚠️ 视觉兜底无法连接后端 {self.server_url}（{e.reason}）。"
+                f"请确认后端已启动：cd D:\\LearningApp && docker compose up -d"
+            )
             return (None, 0.0)
         except Exception as e:
             logger.warning(f"视觉兜底不可用，跳过: {e}")
@@ -105,7 +112,7 @@ class VLMClassifier:
 
         activity = data.get('activity')
         confidence = float(data.get('confidence') or 0.0)
-        if activity in ('study', 'entertainment', 'idle'):
+        if activity in ('study', 'entertainment', 'idle', 'unknown'):
             return (activity, confidence)
         return (None, 0.0)
 

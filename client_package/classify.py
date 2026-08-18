@@ -15,6 +15,7 @@ import os
 import platform
 import re
 import logging
+import time
 
 # 健壮性：相对/绝对导入兜底，capture / psutil 延迟导入，
 # 使本模块在没有 pyautogui / cv2 / psutil 时也能被评测脚本导入。
@@ -91,6 +92,14 @@ BROWSER_HINTS = [
 ]
 # 进程名含糊（java/javaw 既可能是编程 IDE，也可能是 Minecraft）
 AMBIGUOUS_PROCESS_HINTS = ['java', 'javaw']
+
+# 桌面外壳/系统界面进程：前台是它们且无标题 → 真正空闲（桌面、锁屏、搜索、开始菜单）
+DESKTOP_SHELL_PROCESSES = [
+    'explorer.exe', 'dwm.exe', 'searchui.exe', 'searchapp.exe',
+    'applicationframehost.exe', 'lockapp.exe', 'startmenuexperiencehost.exe',
+    'shellexperiencehost.exe', 'shellhost.exe', 'textinputhost.exe',
+    'windowsinternal.composableshell.experiences.shellframehost.exe',
+]
 
 SYSTEM_PROCESSES = [
     "system", "system idle process", "registry", "smss.exe", "csrss.exe",
@@ -301,8 +310,14 @@ def analyze_title(title):
 
 
 def fuse_signals(signals):
-    """置信度感知融合。返回 (activity, decision_conf, scores, uncertain)。"""
-    scores = {'study': 0.0, 'entertainment': 0.0, 'idle': 0.0}
+    """置信度感知融合。返回 (activity, decision_conf, scores, uncertain)。
+
+    - 无任何有效信号（total<=0）→ ('unknown', uncertain=True)：规则未覆盖，
+      交由调用方区分“真空闲”与“无法判定”，并触发视觉兜底。
+    - 有信号但赢家分数过低 / 两可差距过小 → ('unknown', uncertain=True)。
+    - 明确赢家 → study / entertainment。
+    """
+    scores = {'study': 0.0, 'entertainment': 0.0, 'idle': 0.0, 'unknown': 0.0}
     total = 0.0
     for s in signals:
         cat, w, cf = s['category'], s['weight'], s['confidence']
@@ -310,16 +325,51 @@ def fuse_signals(signals):
             scores[cat] += w * cf
             total += w * cf
     if total <= 0:
-        return 'idle', 0.0, scores, False
+        return 'unknown', 0.0, scores, True
     norm = {k: v / total for k, v in scores.items()}
     ranked = sorted(norm.items(), key=lambda x: -x[1])
     top_cat, top_val = ranked[0]
     second_val = ranked[1][1]
-    if top_cat == 'idle':
-        return 'idle', round(top_val, 3), scores, True
     if top_val < FUSION_MIN_CONF or (top_val - second_val) < FUSION_MARGIN:
-        return 'idle', round(top_val, 3), scores, True
+        return 'unknown', round(top_val, 3), scores, True
     return top_cat, round(top_val, 3), scores, False
+
+
+def resolve_idle_unknown(fg_process, title, activity):
+    """区分「真正空闲」与「规则未覆盖」。
+
+    返回 (activity, reason, uncertain)：
+    - 无前台进程且无标题 → idle（锁屏/离开），reason=no_foreground，不触发视觉兜底
+    - 前台是桌面外壳进程 → idle（桌面/搜索/锁屏界面），reason=desktop_shell
+    - 前台是浏览器但标题为空 → idle（浏览器空白页），reason=browser_blank
+    - 其余有界面但规则未命中 → unknown（无法判定），reason=rules_uncovered，触发视觉兜底
+    """
+    if activity != 'unknown':
+        return activity, 'signal', False
+    low_title = (title or '').strip()
+    fg_low = (fg_process or '').lower()
+    is_shell = fg_low in DESKTOP_SHELL_PROCESSES
+    is_browser = any(h in fg_low for h in BROWSER_HINTS)
+    if not fg_low and not low_title:
+        return 'idle', 'no_foreground', False
+    if is_shell:
+        return 'idle', 'desktop_shell', False
+    if is_browser and not low_title:
+        return 'idle', 'browser_blank', False
+    return 'unknown', 'rules_uncovered', True
+
+
+def _pick_decision_source(pconf, tconf, lconf, vision_label):
+    """判定依据：视觉兜底优先，其次按权重顺序取有信号的来源。"""
+    if vision_label:
+        return vision_label
+    if lconf and lconf > 0:
+        return 'text_llm'
+    if pconf and pconf > 0:
+        return 'process'
+    if tconf and tconf > 0:
+        return 'title'
+    return 'none'
 
 
 def classify_from_signals(running_processes, title,
@@ -335,13 +385,12 @@ def classify_from_signals(running_processes, title,
     if tconf > 0:
         signals.append({'category': tcat, 'weight': WEIGHTS['title'], 'confidence': tconf})
 
-    activity, dconf, scores, uncertain = fuse_signals(signals)
     breakdown = {
         'process': (pcat, pconf, pdetail),
         'title': (tcat, tconf, site, tdetail),
-        'uncertain': uncertain,
     }
 
+    lcat, lconf, lreason = None, 0.0, None
     if use_text_llm and _cfg('enable_text_llm', False):
         try:
             from .llm_judge import TextJudge
@@ -354,8 +403,15 @@ def classify_from_signals(running_processes, title,
             logger.error(f"文本LLM判级失败: {e}")
 
     activity, dconf, scores, uncertain = fuse_signals(signals)
-    breakdown['fusion'] = (activity, dconf, scores, uncertain)
 
+    # 区分「真正空闲」与「规则未覆盖」（unknown）
+    fg_proxy = running_processes[0] if running_processes else None
+    activity, reason, uncertain = resolve_idle_unknown(fg_proxy, title, activity)
+
+    breakdown['fusion'] = (activity, dconf, scores, uncertain)
+    breakdown['reason'] = reason
+
+    vcat, vconf = None, 0.0
     if uncertain and use_vlm and (_cfg('enable_vlm', False) or _cfg('enable_server_vision', False)):
         try:
             from .capture import capture_screen
@@ -368,6 +424,9 @@ def classify_from_signals(running_processes, title,
                 activity = vcat
         except Exception as e:
             logger.error(f"VLM兜底失败: {e}")
+
+    breakdown['decision_source'] = _pick_decision_source(
+        pconf, tconf, lconf, 'ocr' if (vconf >= CONF_THRESHOLD and vcat in ('study', 'entertainment')) else None)
 
     return activity, dconf, breakdown
 
@@ -459,8 +518,19 @@ def get_active_window_title():
         return ""
 
 
-def multimodal_fusion_analysis(tesseract_available=False):
-    """端到端分类（真实运行环境）。返回字符串 activity。"""
+# 视觉兜底节流：即使一直“不确定”，截图上传间隔也至少为 vision_min_interval 秒
+# （避免无信号/锁屏等高频场景每 5 秒打一次服务端）
+_VISION_MIN_INTERVAL = float(_cfg('vision_min_interval', 30))
+_last_vision_ts = 0.0
+
+
+def multimodal_fusion_analysis(tesseract_available=False, return_meta=False):
+    """端到端分类（真实运行环境）。
+
+    return_meta=False：返回 activity 字符串（保持向后兼容）。
+    return_meta=True ：返回 (activity, meta)，meta 含 confidence/decision_source/reason/
+                       uncertain，供 main.py 上报服务端记录判定依据。
+    """
     signals = []
     breakdown = {}
 
@@ -499,23 +569,52 @@ def multimodal_fusion_analysis(tesseract_available=False):
             breakdown['text_llm'] = ('idle', 0.0, 'error')
 
     activity, dconf, scores, uncertain = fuse_signals(signals)
-    breakdown['fusion'] = (activity, dconf, scores, uncertain)
 
+    # 区分「真正空闲」与「规则未覆盖」（unknown）：真空闲不触发视觉兜底
+    activity, reason, uncertain = resolve_idle_unknown(fg, title, activity)
+    breakdown['fusion'] = (activity, dconf, scores, uncertain)
+    breakdown['reason'] = reason
+
+    # 视觉兜底（服务端 OCR / 本地 VLM），带节流
+    global _last_vision_ts
+    vision_overridden = False
     if uncertain and (_cfg('enable_vlm', False) or _cfg('enable_server_vision', False)):
-        try:
-            from .vlm_classifier import VLMClassifier
-            if image is None:
-                from .capture import capture_screen
-                image = capture_screen()
-            vlm = VLMClassifier()
-            vcat, vconf = vlm.classify(image)
-            breakdown['vlm'] = (vcat, vconf, 'fallback')
-            if vconf >= CONF_THRESHOLD and vcat in ('study', 'entertainment'):
-                activity = vcat
-                logger.info(f"VLM兜底判定: {vcat} (置信度 {vconf:.3f})")
-        except Exception as e:
-            logger.error(f"VLM兜底失败: {e}")
-            breakdown['vlm'] = ('idle', 0.0, 'error')
+        now = time.time()
+        if now - _last_vision_ts >= _VISION_MIN_INTERVAL:
+            try:
+                from .vlm_classifier import VLMClassifier
+                if image is None:
+                    from .capture import capture_screen
+                    image = capture_screen()
+                vlm = VLMClassifier()
+                vcat, vconf = vlm.classify(image)
+                breakdown['vlm'] = (vcat, vconf, 'fallback')
+                _last_vision_ts = now
+                if vconf >= CONF_THRESHOLD and vcat in ('study', 'entertainment'):
+                    activity = vcat
+                    dconf = vconf
+                    vision_overridden = True
+                    logger.info(f"视觉兜底判定: {vcat} (置信度 {vconf:.3f})")
+            except Exception as e:
+                logger.error(f"VLM兜底失败: {e}")
+                breakdown['vlm'] = ('idle', 0.0, 'error')
+
+    decision_source = _pick_decision_source(
+        pconf, tconf, 0.0 if 'text_llm' not in breakdown else breakdown['text_llm'][1],
+        'ocr' if (vision_overridden and _cfg('enable_server_vision', False)) else
+        'vlm' if vision_overridden else None)
+    breakdown['decision_source'] = decision_source
 
     logger.info(f"融合结果: {activity} (决策置信度 {dconf}) 明细 {breakdown}")
+    if return_meta:
+        meta = {
+            'confidence': round(dconf, 3),
+            'decision_source': decision_source,
+            'reason': reason,
+            'uncertain': uncertain,
+            'vision_overridden': vision_overridden,
+            'process': fg,               # 前台进程（unknown 诊断用）
+            'title': title,              # 窗口标题（unknown 诊断用）
+        }
+        return activity, meta
     return activity

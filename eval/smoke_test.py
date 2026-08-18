@@ -53,21 +53,23 @@ def main():
         except Exception:
             fake_img = None
         cat, conf = vlm.VLMClassifier().classify(fake_img)
-        ok('VLM 缺失优雅降级', cat in (None, 'study', 'entertainment', 'idle') and conf >= 0,
+        ok('VLM 缺失优雅降级', cat in (None, 'study', 'entertainment', 'idle', 'unknown') and conf >= 0,
            f'cat={cat} conf={conf}')
     except Exception as e:
         ok('VLM 缺失优雅降级', False, repr(e))
 
-    # 4) 主分类在多种输入下不崩溃
+    # 4) 主分类在多种输入下不崩溃（含 unknown：有界面但规则未覆盖）
     try:
         for proc, title in [
             (['code.exe'], 'main.py - Visual Studio Code'),
             (['chrome.exe'], '抖音 搞笑视频'),
             (['explorer.exe'], ''),
             (['idea64.exe'], 'MyProject - IntelliJ IDEA'),
+            (['weirdapp.exe'], 'Untitled - weirdapp'),
         ]:
-            a, _, _ = classify.classify_from_signals(proc, title)
-            assert a in ('study', 'entertainment', 'idle')
+            a, _, br = classify.classify_from_signals(proc, title)
+            assert a in ('study', 'entertainment', 'idle', 'unknown'), a
+            assert 'reason' in br, '缺少 reason 原因码'
         ok('主分类多输入不崩溃', True)
     except Exception as e:
         ok('主分类多输入不崩溃', False, repr(e))

@@ -14,14 +14,18 @@ def get_distribution(
     start_date: str = None,
     end_date: str = None,
     days: int = None,
+    device: str = None,
     db: Session = Depends(get_db)
 ):
     """学习/娱乐分布。days: 0=全部；N=最近 N 天（含今天）；None=不按天数过滤。
-    也可用 start_date/end_date 精确指定范围（与 days 二选一）。"""
+    也可用 start_date/end_date 精确指定范围（与 days 二选一）。device 可选，按设备过滤。"""
     query = db.query(
         ActivityLog.activity,
         func.count(ActivityLog.id).label('count')
     )
+
+    if device:
+        query = query.filter(ActivityLog.device_id == device)
 
     if days == 0:
         pass  # 全部历史

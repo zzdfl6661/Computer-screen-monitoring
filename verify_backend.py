@@ -30,7 +30,31 @@ def main():
     r2 = requests.post(f"{BASE}/check_activity", json={"activity": "study"}, headers=hdr, timeout=5)
     print("[check study]", r2.status_code, r2.json())
 
-    ok = (r1.json().get("status") == "warning" and r2.json().get("status") == "good")
+    # 4.1) idle 应为 neutral（不再是 ERROR）
+    r3 = requests.post(f"{BASE}/check_activity", json={"activity": "idle"}, headers=hdr, timeout=5)
+    print("[check idle]", r3.status_code, r3.json())
+
+    # 4.2) unknown 是合法状态
+    r4 = requests.post(f"{BASE}/check_activity", json={"activity": "unknown"}, headers=hdr, timeout=5)
+    print("[check unknown]", r4.status_code, r4.json())
+
+    # 4.3) 非法枚举应 422（不再是 200+error）
+    r5 = requests.post(f"{BASE}/check_activity", json={"activity": "garbage"}, headers=hdr, timeout=5)
+    print("[check garbage]", r5.status_code, "(期望 422)")
+
+    # 4.4) 带判定依据上报
+    r6 = requests.post(f"{BASE}/check_activity",
+                       json={"activity": "study", "confidence": 0.87,
+                             "decision_source": "process", "reason": "study_proc:code.exe"},
+                       headers=hdr, timeout=5)
+    print("[check study+meta]", r6.status_code, r6.json())
+
+    ok = (r1.json().get("status") == "warning"
+          and r2.json().get("status") == "good"
+          and r3.json().get("status") == "neutral"
+          and r4.json().get("status") == "unknown"
+          and r5.status_code == 422
+          and r6.status_code == 200)
     print("RESULT:", "PASS" if ok else "FAIL")
 
 

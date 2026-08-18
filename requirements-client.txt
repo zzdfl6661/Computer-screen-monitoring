@@ -1,8 +1,8 @@
 # 客户端（桌面监控程序 main.py）专用依赖
 # 说明：客户端零模型、无 onnxruntime / pytesseract（视觉兜底走服务端 OCR）。
+# 截屏改用 Windows GDI（ctypes+numpy），无第三方截屏库依赖。
 numpy>=1.26.0
 opencv-python>=4.8.0
-PyAutoGUI>=0.9.54
 psutil>=5.9.0
 requests>=2.31.0
 cryptography>=43.0.0

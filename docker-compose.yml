@@ -8,6 +8,8 @@ services:
       - DATABASE_URL=postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
       - APP_ENV=${APP_ENV}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+      - STORE_IMAGE_RAW=${STORE_IMAGE_RAW:-0}
     depends_on:
       db:
         condition: service_healthy

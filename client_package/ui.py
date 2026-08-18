@@ -43,45 +43,34 @@ def show_config_window():
 
 
 def show_popup(message, activity_type=None):
+    """弹出学习提醒弹窗。
+
+    设计原则：青少年/小孩不会给出准确的"误报/漏报"反馈（甚至会报复性乱选），
+    因此弹窗只保留"确定"按钮——确认看到了就行，不再让孩子做主观标注。
+    反馈数据仍然走 `feedback` 表（POST 接口保留），供家长端或程序化使用。
+    """
     is_windows = platform.system() == 'Windows'
     feedback_result = {'type': None, 'activity_type': activity_type}
-    
+
     if is_windows:
         try:
             root = tk.Tk()
             root.title("学习提醒")
-            root.geometry("400x220")
+            root.geometry("360x160")
             root.attributes('-topmost', True)
-            
-            tk.Label(root, text=message, wraplength=360, font=('Microsoft YaHei', 12)).pack(pady=20)
-            
-            frame = tk.Frame(root)
-            frame.pack(pady=10)
-            
-            def on_false_positive():
-                feedback_result['type'] = 'false_positive'
-                root.destroy()
-            
-            def on_false_negative():
-                feedback_result['type'] = 'false_negative'
-                root.destroy()
-            
+
+            tk.Label(root, text=message, wraplength=320, font=('Microsoft YaHei', 12)).pack(pady=24)
+
             def on_ok():
                 root.destroy()
-            
-            if activity_type:
-                tk.Button(frame, text="误报", command=on_false_positive, 
-                          width=12, bg='#fff3cd', fg='#856404').pack(side=tk.LEFT, padx=5)
-                tk.Button(frame, text="漏报", command=on_false_negative, 
-                          width=12, bg='#f8d7da', fg='#721c24').pack(side=tk.LEFT, padx=5)
-            
-            tk.Button(frame, text="确定", command=on_ok, width=12).pack(side=tk.LEFT, padx=5)
-            
+
+            tk.Button(root, text="确定", command=on_ok, width=12).pack(pady=10)
+
             root.mainloop()
         except Exception as e:
             logger.error(f"弹窗失败: {e}")
             logger.info(f"提示信息: {message}")
     else:
         logger.info(f"提示信息: {message}")
-    
+
     return feedback_result

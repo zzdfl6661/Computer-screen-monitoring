@@ -1,9 +1,11 @@
 """
-服务端视觉分析（OCR + 规则判级）。
+服务端视觉分析（OCR + 规则判级，多信号融合）。
 
-接收客户端上传的降采样截图（384px JPEG）：
-  base64 解码 -> Tesseract OCR 提取界面文字 -> 站点声誉/关键词规则判级
-  -> 返回 study/entertainment/idle + 置信度。图片与 OCR 文本由路由层入库。
+接收客户端上传的降采样截图（768px JPEG）+ 前台进程 + 窗口标题：
+  1. OCR 提取界面文字（灰度/放大/对比度预处理 + psm 6/11 择优）
+  2. 融合三个证据：前台进程、窗口标题、OCR 文本 → 判 study/entertainment/idle/unknown
+  3. 生产力工具（Docker Desktop/IDE）与开发终端（docker/powershell/cmd/WindowsTerminal/wsl）
+     使用组合规则：工具进程 + 标题/OCR 含开发词 → 学习证据，避免把终端一律判学习
 
 规则列表与客户端 config.json 保持一致（服务端自包含，不依赖 client_package）。
 后续可平滑升级为 VLM（qwen2.5vl:3b 等）而无需改动客户端协议。
@@ -19,6 +21,12 @@ try:
     import pytesseract
 except Exception:
     pytesseract = None
+
+try:
+    from PIL import Image, ImageOps
+except Exception:
+    Image = None
+    ImageOps = None
 
 SITE_REPUTATION = {
     "study": [
@@ -83,6 +91,50 @@ STUDY_KEYWORDS = [
 
 AMBIGUOUS_SITE_TOKENS = set(SITE_REPUTATION.get("ambiguous", []))
 
+# ---- 生产力工具与开发终端规则（服务端融合用）----
+
+# 高置信生产力工具：前台进程是它们 → 直接给学习/生产力证据
+PRODUCTIVITY_PROCESSES = [
+    "docker desktop", "dockerdesktop", "idea64", "pycharm", "webstorm", "goland",
+    "rider", "clion", "datagrip", "phpstorm", "rubymine", "intellij",
+    "eclipse", "code.exe", "vscode", "visual studio", "devenv",
+    "notepad++", "sublime", "zotero", "obsidian", "typora", "wps", "word", "excel",
+    "powerpoint", "onenote", "matlab", "anaconda", "jupyter",
+]
+
+# 中性开发工具：本身不等于学习，需标题/OCR 含开发词才给证据
+NEUTRAL_DEV_PROCESSES = [
+    "docker", "docker.exe", "dockerd", "com.docker.build", "podman",
+    "powershell", "powershell.exe", "pwsh", "cmd", "cmd.exe", "conhost",
+    "windowsterminal", "windows terminal", "wt.exe", "terminal",
+    "wsl", "wsl.exe", "alacritty", "wezterm", "mintty", "git bash", "git-bash",
+    "ssh", "ssh.exe", "xshell", "securecrt",
+]
+
+# 明确的后台/守护进程：不作为前台活动依据
+IGNORED_BACKGROUND_PROCESSES = [
+    "com.docker.backend", "com.docker.service", "docker desktop backend",
+    "vmmem", "vmms", "wslservice", "wslhost",
+]
+
+# 开发/生产力关键词：中性工具命中这些词才算学习证据
+DEV_KEYWORDS = [
+    "docker", "compose", "kubectl", "helm", "k8s", "kubernetes", "python",
+    "npm", "node", "yarn", "pnpm", "git", "pip", "conda", "ssh", "vim",
+    "代码", "部署", "镜像", "容器", "编译", "调试", "服务器", "终端",
+    "console", "terminal", "command line", "develop", "coding", "program",
+]
+
+
+def _has_dev_keyword(*texts) -> bool:
+    joined = " ".join((t or "") for t in texts).lower()
+    return any(match_token(joined, k) for k in DEV_KEYWORDS)
+
+
+def _match_process(process, hints) -> bool:
+    p = (process or "").lower()
+    return any(h in p for h in hints)
+
 
 def match_token(text: str, token: str) -> bool:
     """边界感知匹配（与客户端 classify.py 一致）。"""
@@ -105,9 +157,13 @@ def match_site(low_text: str):
 
 
 def classify_text(text: str):
-    """把 OCR 提取的界面文本判为 study/entertainment/idle，返回 (category, confidence, detail)。"""
+    """把 OCR 提取的界面文本判为 study/entertainment/unknown。
+
+    语义统一：无信号返回 unknown（规则未覆盖），不再用 idle 混充"无法判断"。
+    返回 (category, confidence, detail)。
+    """
     if not text:
-        return ("idle", 0.0, "empty")
+        return ("unknown", 0.0, "empty")
     low = text.lower()
     site_cat, site_token = match_site(low)
 
@@ -135,7 +191,7 @@ def classify_text(text: str):
             ent_score += 0.20
 
     if study_score == 0 and ent_score == 0:
-        return ("idle", 0.0, f"site={site_cat} no_signal")
+        return ("unknown", 0.0, f"site={site_cat} no_signal")
 
     total = study_score + ent_score
     if study_score >= ent_score:
@@ -148,18 +204,117 @@ def classify_text(text: str):
     return (cat, round(conf, 3), f"site={site_cat}")
 
 
+def classify_fused(ocr_text: str, window_title: str = None, process: str = None):
+    """融合 前台进程 + 窗口标题 + OCR 文本 三个证据判级。
+
+    返回 (category, confidence, detail)。规则优先级：
+      - 后台守护进程（com.docker.backend 等）不参与判定（中性 0 贡献）
+      - 高置信生产力工具（Docker Desktop/IDE）→ study 0.90
+      - 中性开发工具（docker/powershell/cmd/WindowsTerminal/wsl）→ 仅当标题或 OCR
+        含开发词（docker/compose/python/git…）才给 study 0.75；否则 0 贡献
+      - 标题与 OCR 文本各自走站点声誉/关键词打分
+    三信号按 0.45/0.30/0.25 加权，归一化后取最大类；赢家分 < 0.40 或两可差距 < 0.05
+    或总证据为 0 → unknown。
+    """
+    scores = {"study": 0.0, "entertainment": 0.0}
+    total = 0.0
+    details = []
+
+    # 1) 进程信号
+    p_low = (process or "").lower()
+    if p_low and _match_process(p_low, IGNORED_BACKGROUND_PROCESSES):
+        details.append(f"proc:{process}=ignored_bg")
+    elif p_low and _match_process(p_low, PRODUCTIVITY_PROCESSES):
+        scores["study"] += 0.45 * 0.90
+        total += 0.45 * 0.90
+        details.append(f"proc:{process}=prod")
+    elif p_low and _match_process(p_low, NEUTRAL_DEV_PROCESSES):
+        if _has_dev_keyword(window_title, ocr_text):
+            scores["study"] += 0.45 * 0.75
+            total += 0.45 * 0.75
+            details.append(f"proc:{process}=dev_tool+keyword")
+        else:
+            details.append(f"proc:{process}=dev_tool_no_keyword")
+    else:
+        details.append(f"proc:{process or 'none'}=neutral")
+
+    # 2) 标题信号
+    t_cat, t_conf, _ = classify_text(window_title or "") if (window_title or "").strip() else ("unknown", 0.0, "empty_title")
+    if t_conf > 0 and t_cat in scores:
+        scores[t_cat] += 0.30 * t_conf
+        total += 0.30 * t_conf
+        details.append(f"title:{window_title}=>{t_cat}/{t_conf}")
+
+    # 3) OCR 文本信号
+    o_cat, o_conf, _ = classify_text(ocr_text)
+    if o_conf > 0 and o_cat in scores:
+        scores[o_cat] += 0.25 * o_conf
+        total += 0.25 * o_conf
+        details.append(f"ocr:{o_cat}/{o_conf}")
+
+    if total <= 0:
+        return ("unknown", 0.0, "|".join(details) or "no_signal")
+
+    norm_study = scores["study"] / total
+    norm_ent = scores["entertainment"] / total
+    if norm_study >= norm_ent:
+        cat, conf = "study", norm_study
+    else:
+        cat, conf = "entertainment", norm_ent
+    conf = min(round(conf, 3), 0.95)
+    if conf < 0.40 or abs(norm_study - norm_ent) < 0.05:
+        return ("unknown", conf, "|".join(details))
+    return (cat, conf, "|".join(details))
+
+
+def _preprocess_ocr_image(img):
+    """OCR 前预处理：灰度 → 2x 放大 → 自动对比度增强，提升小字体/深色界面识别率。"""
+    if Image is None:
+        return img
+    try:
+        img = img.convert("L")
+        w, h = img.size
+        img = img.resize((w * 2, h * 2), Image.LANCZOS)
+        img = ImageOps.autocontrast(img)
+    except Exception as e:
+        logger.warning(f"OCR 图片预处理失败: {e}")
+    return img
+
+
 def ocr_bytes(data: bytes, lang: str = "chi_sim+eng") -> str:
-    """对图片字节流做 OCR，返回提取文本；OCR 不可用/失败时返回空串。"""
-    if pytesseract is None:
-        logger.warning("pytesseract 未安装，OCR 不可用")
+    """对图片字节流做 OCR，返回提取文本；OCR 不可用/失败时返回空串。
+
+    改进：预处理（灰度/放大/对比度）后，分别用 --psm 6（块）与 --psm 11（稀疏文本）
+    各跑一次，取识别出文字更多的一次（终端/IDE/小字体界面效果更好）。
+    容错：tessdata 缺 chi_sim 时自动回退到 eng，避免整个 OCR 静默失败。
+    """
+    if pytesseract is None or Image is None:
+        logger.warning("pytesseract/PIL 不可用，OCR 不可用")
         return ""
     try:
-        from PIL import Image
         img = Image.open(io.BytesIO(data))
-        return (pytesseract.image_to_string(img, lang=lang) or "").strip()
+        img.load()
     except Exception as e:
-        logger.error(f"OCR 失败: {e}")
+        logger.error(f"图片打开失败: {e}")
         return ""
+    img = _preprocess_ocr_image(img)
+
+    best_text = ""
+    for psm in ("6", "11"):
+        for attempt_lang in (lang, "eng", ""):
+            try:
+                text = (pytesseract.image_to_string(
+                    img, lang=attempt_lang, config=f"--psm {psm}") or "").strip()
+            except Exception as e:
+                # 降噪：OCR 抛退出码（多半是某种 ps/lang 组合 tesseract 不接）
+                # 不影响融合结果（process+title 信号会兜底），仅 debug 留痕
+                logger.debug(f"OCR 跳过 psm{psm}/{attempt_lang or 'default'}: {e}")
+                continue
+            if len(text) > len(best_text):
+                best_text = text
+    if not best_text:
+        logger.debug("OCR 三种语言+两种 psm 都未提取到文本（融合器会靠 process/title 兜底）")
+    return best_text
 
 
 def decode_base64_image(b64: str) -> bytes:

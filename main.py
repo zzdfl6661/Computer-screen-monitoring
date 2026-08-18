@@ -7,7 +7,6 @@ from client_package import (
     multimodal_fusion_analysis,
     send_to_server,
     show_popup,
-    send_feedback
 )
 from database import DatabaseManager
 from logger import setup_logger
@@ -21,53 +20,47 @@ def main():
     logger.info("学习辅助监控系统启动中...")
 
     result_queue = deque(maxlen=5)
-    
+
     logger.info("使用配置文件启动...")
-    
+
     check_interval = config_manager.get('check_interval')
     logger.info(f"学习辅助监控系统已启动，检查间隔: {check_interval}秒，按Ctrl+C停止...")
-    
+
     try:
         while True:
             logger.info("开始新一轮检查...")
-            
-            activity_type = multimodal_fusion_analysis()
-            
-            logger.info(f"活动分析结果: {activity_type}")
-            
+
+            activity_type, meta = multimodal_fusion_analysis(return_meta=True)
+
+            logger.info(f"活动分析结果: {activity_type} (conf={meta['confidence']}, "
+                        f"source={meta['decision_source']}, reason={meta['reason']})")
+
             result_queue.append(activity_type)
-            
+
             should_trigger = False
             if len(result_queue) >= 3:
                 recent_3 = list(result_queue)[-3:]
                 if all(r == recent_3[0] for r in recent_3):
                     should_trigger = True
                     logger.info(f"连续3次结果一致: {recent_3[0]}")
-            
-            response = send_to_server(activity_type)
+
+            response = send_to_server(
+                activity_type,
+                confidence=meta['confidence'],
+                decision_source=meta['decision_source'],
+                reason=meta['reason'],
+                process=meta.get('process'),
+                title=meta.get('title'),
+            )
             logger.info(f"响应: {response}")
 
+            # 弹窗只用于"连续 3 次判定娱乐"时友好提醒；
+            # 误报/漏报按钮已移除——小孩不会给出准确的反馈，且极易报复性乱选。
+            # 后端 /api/feedback 与 Feedback 表保留，供家长端或程序化使用。
             if should_trigger and response.get("status") == "warning":
                 logger.info(f"显示警告提示: {response['message']}")
-                feedback_result = show_popup(response["message"], activity_type)
-                
-                if feedback_result.get('type'):
-                    logger.info(f"用户提交反馈: {feedback_result['type']}, 检测活动: {activity_type}")
-                    
-                    if feedback_result['type'] == 'false_positive':
-                        actual_activity = 'study'
-                    elif feedback_result['type'] == 'false_negative':
-                        actual_activity = 'entertainment'
-                    else:
-                        actual_activity = activity_type
-                    
-                    feedback_response = send_feedback(
-                        detected_activity=activity_type,
-                        actual_activity=actual_activity,
-                        feedback_type=feedback_result['type']
-                    )
-                    logger.info(f"反馈提交结果: {feedback_response}")
-            
+                show_popup(response["message"], activity_type)
+
             logger.info(f"等待 {check_interval} 秒...")
             time.sleep(check_interval)
     except KeyboardInterrupt:

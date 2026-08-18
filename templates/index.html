@@ -27,7 +27,12 @@
     <div class="container-fluid py-4">
         <div class="row mb-4">
             <div class="col-12">
-                <h1 class="display-5 fw-bold text-center">📊 活动监控仪表盘</h1>
+                <div class="d-flex justify-content-between align-items-center">
+                    <h1 class="display-5 fw-bold text-center flex-grow-1">📊 活动监控仪表盘</h1>
+                    {% if admin_enabled %}
+                    <a href="/logout" class="btn btn-outline-secondary btn-sm">退出登录</a>
+                    {% endif %}
+                </div>
                 <div class="text-center mt-2">
                     <label class="form-label fw-semibold">统计范围：</label>
                     <select id="period-select" class="form-select form-select-sm d-inline-block" style="width: 170px;" onchange="applyPeriod()">
@@ -35,6 +40,10 @@
                         <option value="7">最近 7 天</option>
                         <option value="30">最近 30 天</option>
                         <option value="0">全部历史</option>
+                    </select>
+                    <label class="form-label fw-semibold ms-3">设备：</label>
+                    <select id="device-select" class="form-select form-select-sm d-inline-block" style="width: 180px;" onchange="applyDevice()">
+                        <option value="">全部设备</option>
                     </select>
                 </div>
             </div>
@@ -44,24 +53,27 @@
             <div class="col-md-4">
                 <div class="card stat-card shadow-sm bg-success text-white">
                     <div class="card-body text-center py-4">
-                        <h5 class="card-title mb-2">📚 学习记录</h5>
+                        <h5 class="card-title mb-2">📚 学习</h5>
                         <h2 class="display-4 fw-bold" id="study-count">0</h2>
+                        <div class="small opacity-75">约 <span id="study-minutes">0</span> 分钟 · <span id="study-samples">0</span> 次采样</div>
                     </div>
                 </div>
             </div>
             <div class="col-md-4">
                 <div class="card stat-card shadow-sm bg-warning text-dark">
                     <div class="card-body text-center py-4">
-                        <h5 class="card-title mb-2">🎮 娱乐记录</h5>
+                        <h5 class="card-title mb-2">🎮 娱乐</h5>
                         <h2 class="display-4 fw-bold" id="entertainment-count">0</h2>
+                        <div class="small opacity-75">约 <span id="entertainment-minutes">0</span> 分钟 · <span id="entertainment-samples">0</span> 次采样</div>
                     </div>
                 </div>
             </div>
             <div class="col-md-4">
                 <div class="card stat-card shadow-sm bg-primary text-white">
                     <div class="card-body text-center py-4">
-                        <h5 class="card-title mb-2">📋 总记录数</h5>
+                        <h5 class="card-title mb-2">📋 有效记录</h5>
                         <h2 class="display-4 fw-bold" id="total-count">0</h2>
+                        <div class="small opacity-75">学习+娱乐+无法判定（不含空闲）</div>
                     </div>
                 </div>
             </div>
@@ -79,6 +91,8 @@
                             <option value="">全部</option>
                             <option value="study">学习</option>
                             <option value="entertainment">娱乐</option>
+                            <option value="idle">空闲</option>
+                            <option value="unknown">无法判定</option>
                         </select>
                     </div>
                     <div class="col-md-3">
@@ -135,10 +149,11 @@
 
         <div class="card shadow-sm">
             <div class="card-header bg-light d-flex justify-content-between align-items-center">
-                <h5 class="card-title mb-0">📝 活动日志</h5>
-                <button onclick="refreshData()" class="btn btn-sm btn-outline-primary">
-                    🔄 刷新
-                </button>
+                <h5 class="card-title mb-0">📝 活动日志 <span class="badge bg-secondary ms-2" id="live-tag" title="每 10 秒自动刷新">● 自动刷新</span></h5>
+                <div class="d-flex align-items-center">
+                    <span class="text-muted small me-3">上次刷新：<span id="last-refresh">-</span></span>
+                    <button onclick="refreshData()" class="btn btn-sm btn-outline-primary">🔄 刷新</button>
+                </div>
             </div>
             <div class="card-body p-0">
                 <div class="table-responsive">
@@ -149,23 +164,83 @@
                                 <th>时间戳</th>
                                 <th>活动</th>
                                 <th>消息</th>
+                                <th>置信度</th>
+                                <th>判定依据</th>
+                                <th>原因</th>
+                                <th>设备</th>
                                 <th>来源</th>
                             </tr>
                         </thead>
                         <tbody id="log-table-body">
                             {% for log in activity_log %}
-                                <tr class="{% if log.activity == 'study' %}table-success{% elif log.activity == 'entertainment' %}table-warning{% else %}table-info{% endif %}">
+                                <tr class="{% if log.activity == 'study' %}table-success{% elif log.activity == 'entertainment' %}table-warning{% elif log.activity == 'unknown' %}table-danger{% else %}table-info{% endif %}">
                                     <td>{{ log.id }}</td>
                                     <td>{{ log.timestamp }}</td>
                                     <td>
-                                        <span class="badge {% if log.activity == 'study' %}bg-success{% elif log.activity == 'entertainment' %}bg-warning text-dark{% else %}bg-info{% endif %}">
+                                        <span class="badge {% if log.activity == 'study' %}bg-success{% elif log.activity == 'entertainment' %}bg-warning text-dark{% elif log.activity == 'unknown' %}bg-danger{% else %}bg-info{% endif %}">
                                             {{ log.activity }}
                                         </span>
                                     </td>
                                     <td>{{ log.message }}</td>
+                                    <td>{{ '%.2f'|format(log.confidence) if log.confidence is not none else 'N/A' }}</td>
+                                    <td>{{ log.decision_source or 'N/A' }}</td>
+                                    <td>{{ log.reason or 'N/A' }}</td>
+                                    <td title="{{ log.device_id }}">{{ (log.device_id or 'N/A')[:8] }}</td>
                                     <td>{{ log.source or 'N/A' }}</td>
                                 </tr>
                             {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <div class="card shadow-sm mt-4">
+            <div class="card-header bg-light d-flex justify-content-between align-items-center">
+                <h5 class="card-title mb-0">🔎 反馈核验（误报/漏报）</h5>
+                <button onclick="loadFeedback()" class="btn btn-sm btn-outline-primary">🔄 刷新反馈</button>
+            </div>
+            <div class="card-body">
+                <div class="row g-3 mb-3">
+                    <div class="col-md-3">
+                        <div class="border rounded p-3 text-center">
+                            <div class="text-muted small">反馈总数</div>
+                            <h4 class="mb-0" id="fb-total">0</h4>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="border rounded p-3 text-center">
+                            <div class="text-muted small">误报次数</div>
+                            <h4 class="mb-0 text-warning" id="fb-fp">0</h4>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="border rounded p-3 text-center">
+                            <div class="text-muted small">漏报次数</div>
+                            <h4 class="mb-0 text-danger" id="fb-fn">0</h4>
+                        </div>
+                    </div>
+                    <div class="col-md-3">
+                        <div class="border rounded p-3 text-center">
+                            <div class="text-muted small">误报率 / 漏报率</div>
+                            <h4 class="mb-0" id="fb-rate">- / -</h4>
+                        </div>
+                    </div>
+                </div>
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>ID</th>
+                                <th>时间戳</th>
+                                <th>系统判定</th>
+                                <th>实际活动</th>
+                                <th>反馈类型</th>
+                                <th>设备</th>
+                            </tr>
+                        </thead>
+                        <tbody id="fb-table-body">
+                            <tr><td colspan="6" class="text-center text-muted">暂无反馈数据</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -181,7 +256,81 @@
             loadStats(periodDays());
             loadPieChart(periodDays());
             loadTrendChart();
+            loadDevices();
+            loadFeedback();
+            updateRefreshTime();
         });
+
+        async function loadFeedback() {
+            try {
+                let url = '/api/feedback';
+                const dev = currentDevice();
+                if (dev) url += `?device=${encodeURIComponent(dev)}`;
+                const response = await fetch(url);
+                const data = await response.json();
+
+                document.getElementById('fb-total').textContent = data.total ?? 0;
+                document.getElementById('fb-fp').textContent = data.false_positive_count ?? 0;
+                document.getElementById('fb-fn').textContent = data.false_negative_count ?? 0;
+                const fpRate = ((data.false_positive_rate ?? 0) * 100).toFixed(1);
+                const fnRate = ((data.false_negative_rate ?? 0) * 100).toFixed(1);
+                document.getElementById('fb-rate').textContent = `${fpRate}% / ${fnRate}%`;
+
+                const tbody = document.getElementById('fb-table-body');
+                tbody.innerHTML = '';
+                const items = data.items || [];
+                if (!items.length) {
+                    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">暂无反馈数据</td></tr>';
+                    return;
+                }
+                items.forEach(f => {
+                    const typeBadge = f.feedback_type === 'false_positive'
+                        ? '<span class="badge bg-warning text-dark">误报</span>'
+                        : f.feedback_type === 'false_negative'
+                            ? '<span class="badge bg-danger">漏报</span>'
+                            : `<span class="badge bg-secondary">${f.feedback_type}</span>`;
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td>${f.id}</td>
+                        <td>${f.timestamp}</td>
+                        <td><span class="badge bg-info">${f.detected_activity}</span></td>
+                        <td><span class="badge ${f.actual_activity === 'study' ? 'bg-success' : f.actual_activity === 'entertainment' ? 'bg-warning text-dark' : 'bg-info'}">${f.actual_activity}</span></td>
+                        <td>${typeBadge}</td>
+                        <td title="${f.device_id || ''}">${(f.device_id || 'N/A').slice(0, 8)}</td>
+                    `;
+                    tbody.appendChild(tr);
+                });
+            } catch (error) {
+                console.error('Error loading feedback:', error);
+            }
+        }
+
+        function currentDevice() {
+            return document.getElementById('device-select').value;
+        }
+
+        async function loadDevices() {
+            try {
+                const response = await fetch('/api/devices');
+                const devices = await response.json();
+                const sel = document.getElementById('device-select');
+                devices.forEach(d => {
+                    const opt = document.createElement('option');
+                    opt.value = d.device_token;
+                    opt.textContent = `${d.device_name} (${d.device_type})`;
+                    sel.appendChild(opt);
+                });
+            } catch (error) {
+                console.error('Error loading devices:', error);
+            }
+        }
+
+        function applyDevice() {
+            loadStats(periodDays());
+            loadPieChart(periodDays());
+            loadLogsForPeriod(periodDays());
+            loadFeedback();
+        }
 
         function periodDays() {
             return parseInt(document.getElementById('period-select').value);
@@ -199,11 +348,18 @@
 
         async function loadStats(days) {
             try {
-                const response = await fetch(days === undefined ? '/api/stats' : `/api/stats?days=${days}`);
+                let url = days === undefined ? '/api/stats' : `/api/stats?days=${days}`;
+                const dev = currentDevice();
+                if (dev) url += (url.includes('?') ? '&' : '?') + `device=${encodeURIComponent(dev)}`;
+                const response = await fetch(url);
                 const data = await response.json();
                 document.getElementById('study-count').textContent = data.study_count;
                 document.getElementById('entertainment-count').textContent = data.entertainment_count;
                 document.getElementById('total-count').textContent = data.total_count;
+                document.getElementById('study-minutes').textContent = data.study_minutes ?? 0;
+                document.getElementById('entertainment-minutes').textContent = data.entertainment_minutes ?? 0;
+                document.getElementById('study-samples').textContent = data.study_count ?? 0;
+                document.getElementById('entertainment-samples').textContent = data.entertainment_count ?? 0;
             } catch (error) {
                 console.error('Error loading stats:', error);
             }
@@ -211,7 +367,10 @@
 
         async function loadPieChart(days) {
             try {
-                const response = await fetch(days === undefined ? '/api/distribution' : `/api/distribution?days=${days}`);
+                let url = days === undefined ? '/api/distribution' : `/api/distribution?days=${days}`;
+                const dev = currentDevice();
+                if (dev) url += (url.includes('?') ? '&' : '?') + `device=${encodeURIComponent(dev)}`;
+                const response = await fetch(url);
                 const data = await response.json();
                 
                 const seriesData = [];
@@ -336,16 +495,22 @@
                 const keyword = document.getElementById('filter-keyword').value;
                 const startDate = document.getElementById('filter-start').value;
                 const endDate = document.getElementById('filter-end').value;
+                const device = currentDevice();
 
                 let url = '/api/search?';
                 if (activity) url += `activity=${encodeURIComponent(activity)}&`;
                 if (keyword) url += `keyword=${encodeURIComponent(keyword)}&`;
                 if (startDate) url += `start_date=${encodeURIComponent(startDate)}&`;
                 if (endDate) url += `end_date=${encodeURIComponent(endDate)}`;
+                if (device) url += `device=${encodeURIComponent(device)}`;
+                url += `&limit=500`;
 
                 const response = await fetch(url);
                 const logs = await response.json();
                 renderLogTable(logs);
+                // 手动筛选后脱离自动增量上下文（条件与时段不完全等价）
+                lastLogId = logs.reduce((m, l) => Math.max(m, l.id || 0), 0);
+                currentLogKey = '__manual__';
             } catch (error) {
                 console.error('Error applying filter:', error);
             }
@@ -368,17 +533,26 @@
                 let rowClass = 'table-info';
                 if (log.activity === 'study') rowClass = 'table-success';
                 else if (log.activity === 'entertainment') rowClass = 'table-warning';
+                else if (log.activity === 'unknown') rowClass = 'table-danger';
                 tr.className = rowClass;
+
+                const conf = (log.confidence !== null && log.confidence !== undefined)
+                    ? Number(log.confidence).toFixed(2) : 'N/A';
+                const dev = log.device_id ? log.device_id.slice(0, 8) : 'N/A';
 
                 tr.innerHTML = `
                     <td>${log.id}</td>
                     <td>${log.timestamp}</td>
                     <td>
-                        <span class="badge ${log.activity === 'study' ? 'bg-success' : log.activity === 'entertainment' ? 'bg-warning text-dark' : 'bg-info'}">
+                        <span class="badge ${log.activity === 'study' ? 'bg-success' : log.activity === 'entertainment' ? 'bg-warning text-dark' : log.activity === 'unknown' ? 'bg-danger' : 'bg-info'}">
                             ${log.activity}
                         </span>
                     </td>
                     <td>${log.message}</td>
+                    <td>${conf}</td>
+                    <td>${log.decision_source || 'N/A'}</td>
+                    <td>${log.reason || 'N/A'}</td>
+                    <td title="${log.device_id || ''}">${dev}</td>
                     <td>${log.source || 'N/A'}</td>
                 `;
                 tbody.appendChild(tr);
@@ -389,6 +563,9 @@
             loadStats(periodDays());
             loadPieChart(periodDays());
             loadTrendChart();
+            loadFeedback();
+            fetchNewLogs();        // 增量拉取：仅在当前时段/设备上下文未变时追加新行
+            updateRefreshTime();
         }
 
         function applyPeriod() {
@@ -399,11 +576,19 @@
             loadStats(days);
             loadPieChart(days);
             loadTrendChart(hours);
-            loadLogsForPeriod(days);
+            loadLogsForPeriod(days);   // 切时段 → 全量重拉，重置 lastLogId
         }
 
         function fmtDate(d) {
             return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        }
+
+        // === 日志表：全量/增量 ===
+        let lastLogId = 0;
+        let currentLogKey = '';   // `${days}|${device}` 上下文签名
+
+        function logContextKey(days) {
+            return `${days || 0}|${currentDevice() || ''}`;
         }
 
         async function loadLogsForPeriod(days) {
@@ -416,15 +601,77 @@
                 } else {
                     url += 'start_date=2000-01-01';
                 }
+                const dev = currentDevice();
+                if (dev) url += `&device=${encodeURIComponent(dev)}`;
+                url += `&limit=500`;
                 const response = await fetch(url);
                 const logs = await response.json();
                 renderLogTable(logs);
+                lastLogId = logs.reduce((m, l) => Math.max(m, l.id || 0), 0);
+                currentLogKey = logContextKey(days);
             } catch (error) {
                 console.error('Error loading logs:', error);
             }
         }
 
-        setInterval(refreshData, 30000);
+        async function fetchNewLogs() {
+            const days = periodDays();
+            const ctxKey = logContextKey(days);
+            if (ctxKey !== currentLogKey) {
+                // 用户中途切换了时段/设备，交给 applyPeriod 走全量重拉
+                return;
+            }
+            try {
+                const dev = currentDevice();
+                let url = `/api/search?since_id=${lastLogId}&limit=200`;
+                if (dev) url += `&device=${encodeURIComponent(dev)}`;
+                const response = await fetch(url);
+                const newLogs = await response.json();
+                if (!newLogs.length) return;
+                const tbody = document.getElementById('log-table-body');
+                // 移除"暂无数据"占位行（如有）
+                const placeholder = tbody.querySelector('td[colspan]');
+                if (placeholder) tbody.innerHTML = '';
+                // 按 id 升序追加到顶部
+                newLogs.forEach(log => tbody.prepend(buildLogRow(log)));
+                if (newLogs.length) {
+                    lastLogId = Math.max(lastLogId, ...newLogs.map(l => l.id || 0));
+                }
+            } catch (error) {
+                console.error('Error fetching new logs:', error);
+            }
+        }
+
+        function buildLogRow(log) {
+            const tr = document.createElement('tr');
+            let rowClass = 'table-info';
+            if (log.activity === 'study') rowClass = 'table-success';
+            else if (log.activity === 'entertainment') rowClass = 'table-warning';
+            else if (log.activity === 'unknown') rowClass = 'table-danger';
+            tr.className = rowClass;
+            const conf = (log.confidence !== null && log.confidence !== undefined)
+                ? Number(log.confidence).toFixed(2) : 'N/A';
+            const dev = log.device_id ? log.device_id.slice(0, 8) : 'N/A';
+            tr.innerHTML = `
+                <td>${log.id}</td>
+                <td>${log.timestamp}</td>
+                <td><span class="badge ${log.activity === 'study' ? 'bg-success' : log.activity === 'entertainment' ? 'bg-warning text-dark' : log.activity === 'unknown' ? 'bg-danger' : 'bg-info'}">${log.activity}</span></td>
+                <td>${log.message}</td>
+                <td>${conf}</td>
+                <td>${log.decision_source || 'N/A'}</td>
+                <td>${log.reason || 'N/A'}</td>
+                <td title="${log.device_id || ''}">${dev}</td>
+                <td>${log.source || 'N/A'}</td>
+            `;
+            return tr;
+        }
+
+        function updateRefreshTime() {
+            const el = document.getElementById('last-refresh');
+            if (el) el.textContent = new Date().toLocaleTimeString('zh-CN', { hour12: false });
+        }
+
+        setInterval(refreshData, 10000);  // 10 秒统一刷新：统计/饼图/趋势/反馈/日志增量
     </script>
 </body>
 </html>
