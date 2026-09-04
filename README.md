@@ -10,7 +10,7 @@
 ┌────────────────────────┐      HTTP/JSON (JWT)      ┌──────────────────────────────┐
 │  客户端 main.py（桌面）  │ ────────────────────────→ │  服务端（Docker Compose）       │
 │                        │   check_activity 上报      │  backend (FastAPI + uvicorn)  │
-│ · 前台进程 + 标题判定     │ ←──────────────────────── │  db      (PostgreSQL 15)      │
+│ · 前台进程 + 标题/URL判定  │ ←──────────────────────── │  db      (PostgreSQL 15)      │
 │ · 仅“不确定”样本上传截图   │   响应/警告/反馈          │ · JWT 设备认证                 │
 │ · 弹警告窗（连续3次一致）  │                          │ · 视觉兜底: POST /analyze_image│
 │ · 零模型（无下载）        │                          │   (三信号融合: 进程+标题+OCR)  │
@@ -19,7 +19,7 @@
 ```
 
 要点：
-- **客户端零模型**：识别完全依赖「前台进程 + 窗口标题」规则（无 onnxruntime / pytesseract 下载）；截屏采用 **Windows GDI**（ctypes + numpy），零第三方截屏库依赖。
+- **客户端零模型**：识别依赖「前台进程 + 窗口标题 + 浏览器 URL(best-effort) + 家长覆盖规则」（无 onnxruntime / pytesseract 下载）；截屏采用 **Windows GDI**（ctypes + numpy），零第三方截屏库依赖。
 - **服务端视觉兜底**：仅当本地融合判定为「不确定」时，客户端上传一张 **768px JPEG 降采样截图** 到 `/analyze_image`，服务端融合 **前台进程 + 窗口标题 + OCR 文本** 三信号判级（详见「3. 服务端视觉分析」），**图片与 OCR 文本入库**（`image_analyses` 表）。截图低频、小图、仅模糊样本触发。
 - 原客户端 ONNX 视觉模型（`mobilenetv3-lite.onnx`）已**下线**（下载地址 404），视觉能力统一收归服务端。
 
@@ -27,39 +27,46 @@
 
 ### 1. 学习/娱乐分类（置信度感知融合 + 分层信号）
 
-> 2026-08 优化：离线评测准确率由约 **54% 提升至 100%**（48 个代表性场景集，详见 `eval/`），0 回归。
+> 评测集用于回归规则变化（v1 48 条、v2 165 条）。`unknown` 是保守拒判，不应把“拒判率”误读成学习/娱乐准确率；线上准确性以真实前台窗口、OCR 结果和家长反馈为准。
 
 | 信号 | 权重 | 说明 |
 |------|------|------|
-| 前台进程 | 0.45 | **只看前台窗口所属进程**（后台 QQ/Steam++/抖音守护等不参与判定）；浏览器/java 视为中性交给标题；边界感知匹配（`lib` 不误命中 `bilibili`、`idea` 能配 `idea64`） |
-| 窗口标题+站点声誉 | 0.30 | 识别站点（coursera/知乎/B站/抖音…）：学习站→学习、娱乐站→娱乐、两栖站→关键词二次判定 |
+| 前台进程 | 0.45 | **只看前台窗口所属进程**（后台 QQ/Steam++/抖音守护等不参与判定）；浏览器/java/origin 视为中性交给标题；VS Code、Codex/ChatGPT/Claude、PowerShell/Windows Terminal、Docker 等生产力工具判学习；边界感知匹配避免短词误命中 |
+| 窗口标题+站点声誉 | 0.30 | 识别站点（coursera/知乎/B站/抖音…）：学习站→学习、娱乐站→娱乐、两栖站→关键词二次判定，**两栖站平票→弃权交视觉兜底**（不再默认判学习，鬼畜/综艺不再误判） |
 | 本地文本 LLM | 0.20 | 可选（`enable_text_llm`，默认关），对 (进程,标题,站点) 语义判级，离线回退规则 |
+| 浏览器 URL（best-effort） | 0.30(复用标题) | 前台浏览器时尝试读地址栏 URL（Windows UIA，可选依赖），两栖站按**路径细分**（zhihu `/question`→学习、`/zvideo`→娱乐；bilibili `/read`→学习、`/bangumi`→娱乐）。仅标题无定论时介入，避免双计。Chromium 未聚焦常读不到 → 自动降级标题 |
+| 家长覆盖规则 | 权威覆盖 | 看板标注 unknown 样本 → 生成「进程/标题→学习/娱乐」个性化规则，客户端拉取后**最高优先级覆盖**（跳过视觉兜底），标注次数越多越可信 |
 
 > **权重说明**：以上权重是**相对重要度**而非概率，**无需和为 1**——融合时每个信号贡献 = 权重 × 自身置信度，再对总证据**归一化**后取最大类。
 
 - **融合**：信号贡献 = 权重 × 自身置信度，归一化后 argmax；赢家分数 < `fusion_min_confidence`（默认 0.40）或与前一名差距 < `fusion_margin`（默认 0.05）→ 判「不确定」。
-- **视觉兜底（后置覆盖，不参与加权融合）**：仅「不确定」样本触发——`enable_server_vision`（默认开）上传截图到服务端 OCR 判级，或 `enable_vlm`（默认关）本地 Ollama VLM；结果置信度 ≥ `confidence_threshold`（默认 0.45）时**直接采纳**为最终判定。
+- **空闲判定**：只在没有前台窗口（`no_foreground`）或前台是无标题的桌面外壳（`desktop_shell`）时判 `idle`；不再依据键鼠最后输入时间。浏览器/视频/小说窗口即使标题为空也保留为 `unknown`，交给 OCR 识别。
+- **未知归一化**：服务端收到 `unknown` 时，若前台进程/标题有明确生产力或娱乐证据，会写回 `study`/`entertainment`；只有没有可靠证据的样本才保留 `unknown`。
+- **提醒去抖**：客户端连续 3 次判定为娱乐时才弹出提醒，减少窗口切换造成的瞬时误提醒；活动结果仍按每个检查周期上报。
+- **高 DPI 提醒窗**：客户端使用自绘高 DPI 卡片、清晰字体、确定按钮和 15 秒自动收起，避免默认 Tk 弹窗模糊。
+- **视觉兜底（后置覆盖，不参与加权融合）**：仅「不确定」样本触发——`enable_server_vision`（默认开）上传截图到服务端 OCR 判级，或 `enable_vlm`（默认关）本地 Ollama VLM；结果置信度 ≥ `confidence_threshold`（默认 0.45）时**直接采纳**为最终判定。**家长覆盖规则优先级高于视觉兜底**。
 - 连续 3 次一致才弹提醒，减少误判。
 
 **完整判定流程（一图流）：**
 
 ```text
 信号采集
- ├─ 前台进程：浏览器/java → 中性（交给标题）；命中学习/娱乐表 → 强信号(置信度0.9)
- ├─ 窗口标题：站点声誉 + 关键词 → 学习/娱乐分
+ ├─ 前台进程：浏览器/java/origin → 中性（交给标题）；IDE、AI 助手、终端、Docker 等生产力工具 → 学习强信号
+ ├─ 窗口标题：站点声誉 + 关键词 → 学习/娱乐分（两栖站平票→弃权）
+ ├─ 浏览器 URL（best-effort）：两栖站路径细分（/question 学习、/zvideo 娱乐…）
+ ├─ 家长覆盖规则：进程/标题 → 学习/娱乐（看板标注生成，权威覆盖）
  └─ 文本 LLM（可选，默认关）
         │
         ▼
    加权融合（相对权重 × 置信度，归一化后取最大类）
         ├─ 有明确赢家 → 直接返回 study / entertainment / idle
         └─ 判定「不确定」（赢家分 < 0.40 或两可差距 < 0.05）
-               │
-               ▼
-           视觉兜底（后置覆盖，不参与加权融合）
-             ├─ 服务端 OCR（enable_server_vision，默认开）：
-             │    上传 768px 截图 → POST /analyze_image → 三信号融合判级
-             │    （前台进程 + 窗口标题 + OCR 文本，权重 0.45/0.30/0.25）→ 置信度 ≥ 0.45 直接采纳
-             └─ 本地 VLM（enable_vlm，默认关，可选升级路径）
+               ├─ 家长覆盖规则命中 → 权威覆盖（最高优先级，跳过视觉）
+               └─ 视觉兜底（后置覆盖，不参与加权融合）
+                    ├─ 服务端 OCR（enable_server_vision，默认开）：
+                    │    RapidOCR 提取界面文字 + 前台进程 + 窗口标题三信号融合；生产力进程保护 OCR 结果
+                    │    （权重 0.45/0.30/0.25）→ 置信度 ≥ 0.45 直接采纳
+                    └─ 本地 VLM（enable_vlm，默认关，可选升级路径）
 ```
 
 > 说明：**服务端 OCR 是唯一真正上线的视觉能力**（默认开，仅在「不确定」样本触发，截图低频、小图、且入库 `image_analyses`）；本地 VLM 是可选升级。详见下文「3. 服务端视觉分析（OCR）」。
@@ -68,16 +75,20 @@
 - 设备自动注册/登录，`/check_activity`、`/analyze_image` 均需设备令牌（未认证返回 401）。
 
 ### 3. 服务端视觉分析（OCR）
-- `POST /analyze_image`：收 base64 768px JPEG + 前台进程 + 窗口标题 → Tesseract OCR（eng+chi_sim，灰度/放大/对比度预处理 + psm 6/11 择优）→ **三信号融合判级**（前台进程 0.45 + 窗口标题 0.30 + OCR 文本 0.25，归一化后取最大类）→ 返回 `{activity, confidence, ocr_text}`，图片与 OCR 文本写入 `image_analyses`。
+- `POST /analyze_image`：收 base64 768px JPEG + 前台进程 + 窗口标题 → **RapidOCR（onnx，Tesseract 降级）** 提取界面文字 → **三信号融合判级**（前台进程 0.45 + 窗口标题 0.30 + OCR 文本 0.25，归一化后取最大类）→ 返回 `{activity, confidence, ocr_text}`，图片哈希与 OCR 文本写入 `image_analyses`。Codex/ChatGPT/Claude、终端和 Docker 等明确生产力进程不会被 OCR 中的“娱乐”字样覆盖。
 - 后续可平滑升级为 VLM（如 qwen2.5vl:3b）而不改客户端协议。
 
 ### 4. 家长可视化看板
-- `http://localhost:5000/`：统计卡（学习/娱乐/总数）、学习娱乐分布饼图、24h/48h/7天趋势折线图、活动日志表（可按活动/关键词/日期筛选）。
+- `http://localhost:5000/`：统计卡（只统计已识别的学习/娱乐）、学习娱乐分布饼图、24h/48h/7天趋势折线图、活动日志表（可按活动/关键词/日期筛选）。
 - **统计范围选择器**：今天 / 最近 7 天 / 最近 30 天 / 全部历史，一键联动统计卡、饼图、趋势与日志表，支持查看历史。
+- **日期筛选**：开始/结束日期默认填充当天日期，避免只显示浏览器的 `yyyy/mm/日` 占位符。
+- **判定上下文**：日志表显示前台进程和窗口标题，方便核对 Codex、浏览器、终端等是否被误判。
+- **未归类诊断**：unknown 不再占据主统计和饼图，只在折叠诊断区显示；有明确进程/标题的记录会自动归一化。
+- **未知活动标注（标注飞轮）**：系统判不出（unknown）的界面以「进程/标题 + 出现次数」列出，家长点「学习/娱乐」即生成**个性化覆盖规则**（`classification_overrides` 表，重复标注递增 hit_count），客户端下次拉取后权威覆盖判定。这是规则系统追不上的长尾（孩子自装应用）的兜底，也是家长闭环修正的入口。
 - 当前看板与 `/api/*` 默认**公开**（局域网内可访问），如需登录保护可后续接入 user 体系。
 
 ### 5. 数据与隐私
-- 数据入库：`activity_logs`（每次判定）、`image_analyses`（视觉分析+截图）、`feedback`（误报/漏报反馈）。
+- 数据入库：`activity_logs`（每次判定）、`image_analyses`（视觉分析+截图哈希+OCR 文本）、`feedback`（误报/漏报反馈）、`classification_overrides`（家长标注覆盖规则）。
 - 数据保留策略：默认 30 天自动清理 `activity_logs` / `feedback` / `image_analyses`（可调）。
 - 敏感配置（`device_token`/`access_token`）用 cryptography(Fernet) 加密存储；HTTPS 可选（`--ssl`）。
 
@@ -91,17 +102,17 @@
 
 1. **统一活动状态模型**：`study / entertainment / idle / unknown`。后端把 `idle` 正常处理为
    `status=neutral`（不再是 ERROR），`unknown` 为合法状态；枚举外的输入直接返回 422。
-2. **无信号也走视觉兜底**：原来"前台进程+标题都无信号"（total≤0）会直接返回 idle 且不触发 OCR，
-   现在标记为 `unknown + uncertain`，规则未覆盖的界面也会上传服务端识别；
-   新增 `vision_min_interval`（默认 30s）节流，避免高频刷图。
-3. **区分 idle 与 unknown**：无前台/桌面外壳/浏览器空白页 → `idle`（原因码
-   `no_foreground/desktop_shell/browser_blank`）；有界面但规则未命中 → `unknown`
+2. **不确定样本走视觉兜底**：只有存在前台界面但本地规则无法判级时才标记
+   `unknown + uncertain` 并上传服务端 OCR；真正没有前台窗口/无标题桌面外壳仍是 `idle`，不截图；
+   `vision_min_interval` 默认 5s 节流，避免高频刷图。
+3. **区分 idle 与 unknown**：无前台或无标题的桌面外壳 → `idle`（原因码
+   `no_foreground/desktop_shell`）；有界面但规则未命中（包括浏览器标题为空）→ `unknown`
    （原因码 `rules_uncovered`），并记录判定依据 `decision_source`。
 4. **记录判定依据**：`activity_logs` 新增 `device_id/confidence/decision_source/reason` 列，
    客户端上报元数据，看板日志表直接展示"为什么判成这个结果"。
-5. **统计口径修正**：`total_count = study + entertainment + unknown`（不含 idle），
-   idle/unknown 单列；新增 `study_minutes/entertainment_minutes`（连续同活动样本
-   按时间戳分段聚合的近似时长，而非采样次数）。
+5. **家长统计口径**：主卡片与分布图只统计 `study + entertainment`；idle/unknown
+   仅作为诊断字段，不再混入家长要看的学习/娱乐结果。服务启动时会把有明确进程/标题证据的历史
+   unknown 归一化为 study/entertainment，并纠正明确生产力进程被 OCR 写成 entertainment 的历史记录。
 6. **隐私与权限**：设置 `ADMIN_PASSWORD` 后看板与 `/api/*` 需登录（`/login` 密码门，
    HttpOnly Cookie，24h）；截图默认只存 SHA-256 哈希，`STORE_IMAGE_RAW=1` 才存原始
    base64；日志带 `device_id` 支持设备隔离筛选。
@@ -116,13 +127,12 @@
 
 - **`/analyze_image` 三信号融合**（`app/vision.py::classify_fused`）：不再只靠 OCR 文本，
   融合 **前台进程 + 窗口标题 + OCR 文本**（权重 0.45/0.30/0.25，归一化后取最大类）。
-  生产力工具（Docker Desktop / IDE）直接给学习证据；中性开发工具
-  （docker/powershell/cmd/WindowsTerminal/wsl）需标题或 OCR 含开发词
-  （docker/compose/kubectl/python/npm/git…）才给证据；`com.docker.backend` 等
-  后台守护进程不参与判定。**修复了 Docker/终端界面 OCR 读不出文字却被判 unknown 的问题。**
+  生产力工具（Docker Desktop / IDE / Codex/ChatGPT/Claude）和前台开发终端直接给学习证据；
+  `com.docker.backend` 等后台守护进程不参与判定。服务端还会保护生产力进程，避免 OCR 看到代码文本中的
+  “entertainment” 就把 Codex 误报成娱乐。
 - **语义统一**：服务端 `classify_text` 无信号返回 `unknown`（不再用 idle 混充"无法判断"）。
-- **OCR 输入改进**：客户端截图优先截前台窗口（Windows），上传长边 384px → **768px**；
-  服务端 OCR 前做灰度/2x 放大/对比度增强，并尝试 `--psm 6`/`--psm 11` 取文字多的一次。
+- **OCR 输入改进**：客户端截图优先截前台窗口（Windows），上传长边 **768px**；
+  RapidOCR 主路径负责中文界面识别，Tesseract 仅作降级路径。
 - **unknown 可诊断**：`activity_logs` 新增 `process/title` 列，客户端随上报携带；
   新增 `GET /api/unknown-top?days=&limit=` 聚合 unknown 的进程/标题 TOP N，定向补规则。
 - **看板实时更新**：`/api/search` 支持 `since_id` 增量拉取；看板每 **10 秒**统一刷新
@@ -138,8 +148,8 @@
   失败回退全屏。`requirements-client.txt` 已移除 PyAutoGUI 和 Pillow。
 - **连接错误诊断**：`vlm_classifier.py` 增加 `URLError` 专门分支，后端容器未启动时明确提示
   "请 docker compose up -d"，替代隐晦的 urlopen error。
-- **人工测试通过**：自动化评测 100%（48/48 场景，0 回归）+ 人工真实场景测试一轮通过，
-  达到初步可上线标准（详见 `eval/MANUAL_TEST.md`）。
+- **真实运行验证**：Docker backend 健康、RapidOCR 可用；看板主统计只返回学习/娱乐，
+  日志包含前台进程/窗口标题，客户端可持续上报。
 
 ## 技术栈
 
@@ -148,7 +158,7 @@
 | 服务端 | FastAPI + uvicorn + SQLAlchemy |
 | 数据库 | PostgreSQL 15（Docker）/ SQLite（本地兜底） |
 | 认证 | python-jose (JWT)、passlib |
-| 服务端视觉 | Tesseract OCR（eng+chi_sim）+ pytesseract + Pillow |
+| 服务端视觉 | RapidOCR（主路径）+ Tesseract/pytesseract/Pillow（降级） |
 | 客户端 | numpy / opencv-python / psutil / requests / Windows GDI（ctypes 截屏，零第三方依赖） |
 | 前端 | Jinja2 + Bootstrap 5 + ECharts |
 | 部署 | Docker Compose（backend + db） |
@@ -180,7 +190,7 @@ python main.py
 ```
 
 > 客户端需要显示器与进程访问，不能容器化；`config.json` 中 `server_url` 指向服务端地址，首次运行自动注册设备。
-> 截屏采用 Windows GDI（ctypes + numpy），**无需安装 PyAutoGUI 或 Pillow**；客户端依赖仅 numpy / opencv-python / psutil / requests / cryptography / sqlalchemy / python-json-logger。
+> 截屏采用 Windows GDI（ctypes + numpy），**无需安装 PyAutoGUI 或 Pillow**；客户端依赖仅 numpy / opencv-python / psutil / requests / cryptography / sqlalchemy / python-json-logger，另有**可选** `comtypes`（浏览器 URL 读取，未装自动降级）。
 
 ### 本地直接运行服务端（开发用，SQLite）
 
@@ -209,20 +219,24 @@ python fastapi_server.py
 │   ├── vision.py               # 服务端视觉：三信号融合（OCR+进程+标题）
 │   ├── auth/                   # JWT 认证（注册/登录/依赖）
 │   ├── routes/                 # activity / stats / distribution / trend /
-│   │                           # search / feedback / privacy / vision
+│   │                           # search / feedback / privacy / vision / label
+│   ├── utils/classification.py # unknown 归一化与生产力进程误报保护
 │   └── utils/data_retention.py # 数据保留清理（含 image_analyses）
 │
 ├── client_package/             # 客户端模块
-│   ├── classify.py             # 核心分类：前台进程+标题融合+不确定触发
+│   ├── classify.py             # 核心分类：进程+标题+URL+覆盖规则 融合
+│   ├── overrides.py            # 家长覆盖规则拉取与匹配（标注飞轮客户端侧）
+│   ├── browser_url.py          # 浏览器 URL 读取（UIA，可选依赖，best-effort）
 │   ├── vlm_classifier.py       # 视觉兜底（server 分支：上传截图；ollama 分支可选）
 │   ├── llm_judge.py            # 本地文本 LLM（可选）
 │   ├── capture.py             # GDI 截屏（ctypes+numpy，零第三方依赖，优先截前台窗口）
 │   ├── report.py / ui.py / feedback.py / config.py
 │
-├── templates/index.html        # 家长看板（统计范围选择器）
+├── templates/index.html        # 家长看板（学习/娱乐主统计 + 折叠诊断区 + 日期筛选）
 ├── eval/                       # 评测与测试
-│   ├── run_eval.py             # 前后对比评测（旧 54.2% → 新 100%）
-│   ├── legacy_classify.py / samples.json / report.txt
+│   ├── run_eval.py             # 回归评测（v1 48 条 / v2 165 条，允许 unknown 拒判）
+│   ├── grid_search.py          # 融合参数网格搜索（结论：当前参数已在平台期）
+│   ├── samples.json / samples_v2.json / report.txt / grid_search_report.txt
 │   ├── smoke_test.py           # 离线健壮性冒烟
 │   ├── cli_test.py             # 人工测试 CLI
 │   └── debug_process_signal.py # 进程信号诊断
@@ -245,6 +259,7 @@ python fastapi_server.py
 | `vision_min_interval` | 5 | 视觉兜底最小间隔（秒，节流截图上送频率） |
 | `enable_text_llm` / `enable_vlm` | false | 本地 LLM / 端侧 VLM（可选） |
 | `site_reputation` / `study_keywords` / `entertainment_keywords` | […] | 站点声誉与关键词 |
+| `url_path_rules` | {…} | 两栖站路径细分规则（zhihu `/question`→study 等，URL 可读时生效） |
 
 ## API 端点
 
@@ -254,13 +269,16 @@ python fastapi_server.py
 | GET | `/health` | 健康检查 | 公开 |
 | GET | `/docs` | Swagger 文档 | 公开 |
 | POST | `/check_activity` | 客户端上报判定 | 设备令牌 |
-| POST | `/analyze_image` | 服务端视觉分析（三信号融合，图片入库） | 设备令牌 |
+| POST | `/analyze_image` | 服务端视觉分析（RapidOCR 三信号融合，图片入库） | 设备令牌 |
 | GET | `/api/stats?days=` | 统计（`days`：1/7/30/0=全部） | 公开 |
 | GET | `/api/distribution?days=` | 学习/娱乐分布 | 公开 |
 | GET | `/api/trend?hours=` | 时间趋势 | 公开 |
 | GET | `/api/search` | 日志搜索（activity/keyword/日期，支持 `since_id` 增量拉取） | 公开 |
 | GET | `/api/feedback` | 误报/漏报统计与明细 | 公开 |
 | GET | `/api/unknown-top?days=&limit=` | unknown 进程/标题 TOP N 聚合 | 公开 |
+| POST | `/api/label` | 家长标注 unknown 样本 → 生成覆盖规则 | 公开 |
+| GET | `/api/overrides` | 客户端拉取覆盖规则（按设备过滤） | 公开 |
+| POST | `/api/overrides/{id}/toggle` | 停用/启用一条覆盖规则 | 公开 |
 | POST | `/auth/device/register` `/auth/device/login` | 设备注册/登录 | 公开 |
 
 ## 常用命令

@@ -68,3 +68,23 @@ class ImageAnalysis(Base):
     window_title = Column(String, nullable=True)
     process = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ClassificationOverride(Base):
+    """家长标注覆盖规则（标注飞轮）：家长在看板上对 unknown 样本一键标注后，
+    生成「进程/标题 → 学习/娱乐」的个性化覆盖规则，客户端拉取并权威覆盖规则判定。
+
+    这是规则系统永远追不上的长尾（孩子自己装的游戏/应用不在全局表里）的兜底：
+    同一 (device_id, process, title) 被多次标注 → hit_count 递增，规则越用越准。
+    """
+    __tablename__ = "classification_overrides"
+
+    id = Column(Integer, primary_key=True, index=True)
+    device_id = Column(String, nullable=False, index=True)
+    process = Column(String, nullable=True)              # 前台进程名（精确匹配，小写）
+    title = Column(String, nullable=True)                # 窗口标题子串（模糊匹配，可空=仅进程）
+    activity = Column(String, nullable=False)            # study / entertainment / idle
+    hit_count = Column(Integer, nullable=False, default=1)  # 标注次数，越高越可信
+    active = Column(Integer, nullable=False, default=1)     # 0=停用（家长撤回）
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

@@ -5,6 +5,7 @@ from datetime import datetime, timedelta
 
 from ..database import get_db
 from ..models import ActivityLog
+from ..utils.time import now_local
 
 router = APIRouter()
 
@@ -22,7 +23,7 @@ def get_distribution(
     query = db.query(
         ActivityLog.activity,
         func.count(ActivityLog.id).label('count')
-    )
+    ).filter(ActivityLog.activity.in_(['study', 'entertainment']))
 
     if device:
         query = query.filter(ActivityLog.device_id == device)
@@ -30,13 +31,21 @@ def get_distribution(
     if days == 0:
         pass  # 全部历史
     elif days and days > 0:
-        start = (datetime.now() - timedelta(days=days - 1)).date().isoformat()
+        start = (now_local() - timedelta(days=days - 1)).date().isoformat()
         query = query.filter(ActivityLog.timestamp >= start)
 
     if start_date:
         query = query.filter(ActivityLog.timestamp >= start_date)
     if end_date:
-        query = query.filter(ActivityLog.timestamp <= end_date)
+        # 日期输入代表整天；用次日零点作为排他上界，避免遗漏结束日的记录。
+        if len(end_date) == 10:
+            try:
+                end_boundary = (datetime.fromisoformat(end_date) + timedelta(days=1)).isoformat()
+            except ValueError:
+                end_boundary = end_date
+        else:
+            end_boundary = end_date
+        query = query.filter(ActivityLog.timestamp < end_boundary)
 
     results = query.group_by(ActivityLog.activity).all()
 

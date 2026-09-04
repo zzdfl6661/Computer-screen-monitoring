@@ -16,6 +16,11 @@ except Exception:
     from config import ConfigManager
 
 try:
+    from .http_client import urlopen
+except Exception:
+    from http_client import urlopen
+
+try:
     from .classify import analyze_processes, analyze_title
 except Exception:
     from classify import analyze_processes, analyze_title
@@ -61,9 +66,8 @@ class TextJudge:
             self.endpoint.rstrip('/') + '/api/generate',
             data=json.dumps(payload).encode('utf-8'),
             headers={'Content-Type': 'application/json'},
-            timeout=10,
         )
-        with urllib.request.urlopen(req) as resp:
+        with urlopen(req, timeout=10) as resp:
             data = json.loads(resp.read().decode('utf-8'))
         out = json.loads(data.get('response', '{}'))
         label = out.get('label', 'idle')

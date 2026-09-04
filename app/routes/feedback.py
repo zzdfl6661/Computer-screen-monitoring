@@ -2,12 +2,12 @@ from fastapi import APIRouter, Depends, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from datetime import datetime
 
 from ..database import get_db
 from ..models import Feedback
 from ..auth.dependencies import get_current_device
 from ..auth.models import Device
+from ..utils.time import now_local_iso
 from logger import setup_logger
 
 router = APIRouter(prefix="/api")
@@ -36,7 +36,7 @@ def submit_feedback(
                 f"actual={request.actual_activity}, type={request.feedback_type}")
 
     new_feedback = Feedback(
-        timestamp=datetime.now().isoformat(),
+        timestamp=now_local_iso(),
         device_id=device.device_token,
         detected_activity=request.detected_activity,
         actual_activity=request.actual_activity,

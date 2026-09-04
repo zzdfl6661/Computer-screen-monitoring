@@ -9,7 +9,7 @@
      由服务端 OCR+规则判级；原客户端 ONNX 视觉模型已下线，不再下载）
 
 融合：每个信号贡献 = 权重 × 自身置信度；总证据归一化后 argmax + 置信度阈值。
-低置信 → 标记不确定 → 触发服务端视觉兜底；否则保守返回 idle（不误报）。
+低置信 → 标记不确定 → 触发服务端视觉兜底；只有没有前台窗口或桌面外壳才返回 idle。
 """
 import os
 import platform
@@ -39,21 +39,24 @@ config_manager = ConfigManager()
 # ---------------------------------------------------------------------------
 DEFAULT_SITE_REPUTATION = {
     "study": [
-        "leetcode", "coursera", "edx", "khan", "khanacademy", "codecademy",
+        "leetcode", "力扣", "coursera", "edx", "khan", "khanacademy", "codecademy",
         "udacity", "mooc", "中国大学mooc", "腾讯课堂", "网易云课堂", "学堂在线",
-        "juejin", "csdn", "stackoverflow", "github", "gitlab", "arxiv",
+        "juejin", "csdn", "stackoverflow", "stack overflow", "github", "gitlab", "arxiv",
         "researchgate", "wikipedia", "wiki", "wolfram", "geogebra", "desmos",
         "docs", "notion", "腾讯会议", "钉钉", "学习通", "雨课堂", "百度文库",
         "道客巴巴", "知乎", "掘金", "博客园", "可汗",
+        "scratch", "ted", "学而思", "作业帮", "有道", "沪江", "猿辅导", "洋葱学园",
     ],
     "entertainment": [
         "netflix", "hulu", "disney", "hbo", "twitch", "tiktok", "douyin",
         "抖音", "kuaishou", "快手", "weibo", "微博", "instagram", "facebook",
         "twitter", "snapchat", "spotify", "apple music", "netease cloud music",
-        "网易云音乐", "qq音乐", "酷狗", "酷我", "steam", "epic", "origin",
+        "网易云音乐", "qq音乐", "酷狗", "酷我", "steam", "epic",
         "uplay", "battlenet", "weixin", "wechat", "王者荣耀", "英雄联盟",
         "原神", "和平精英", "pubg", "fortnite", "steamcommunity",
         "xiaohongshu", "小红书", "tieba", "贴吧",
+        "4399", "7k7k", "洛克王国", "赛尔号", "蛋仔派对", "球球大作战",
+        "米游社", "hoyoverse", "米哈游",
     ],
     "ambiguous": [
         "youtube", "bilibili", "哔哩哔哩", "b站", "iqiyi", "爱奇艺", "优酷",
@@ -90,14 +93,16 @@ BROWSER_HINTS = [
     'vivaldi', 'maxthon', '360se', '360浏览器', 'qqbrowser', 'qq浏览器',
     'sogou explorer', '搜狗浏览器', 'liebao', '猎豹浏览器', 'iexplore',
 ]
-# 进程名含糊（java/javaw 既可能是编程 IDE，也可能是 Minecraft）
-AMBIGUOUS_PROCESS_HINTS = ['java', 'javaw']
+# 进程名含糊：java/javaw 既可能是编程 IDE，也可能是 Minecraft；
+# origin 同名冲突（OriginLab 绘图 vs EA 游戏平台），交给标题判定
+AMBIGUOUS_PROCESS_HINTS = ['java', 'javaw', 'origin']
 
 # 桌面外壳/系统界面进程：前台是它们且无标题 → 真正空闲（桌面、锁屏、搜索、开始菜单）
 DESKTOP_SHELL_PROCESSES = [
     'explorer.exe', 'dwm.exe', 'searchui.exe', 'searchapp.exe',
     'applicationframehost.exe', 'lockapp.exe', 'startmenuexperiencehost.exe',
     'shellexperiencehost.exe', 'shellhost.exe', 'textinputhost.exe',
+    'systemsettings.exe', 'ms-settings',
     'windowsinternal.composableshell.experiences.shellframehost.exe',
 ]
 
@@ -118,6 +123,7 @@ ENTERTAINMENT_PROCESSES = [
     "gog galaxy", "itch", "minecraft launcher", "tlauncher",
     "game", "games", "gaming", "valorant", "valorant-win64-shipping",
     "league of legends", "lol", "leagueclient", "riot client", "riot client ux",
+    "riotclientservices", "riotclientux",
     "dota", "dota2", "steamapps", "csgo", "csgo64", "csgo_launcher",
     "minecraft", "minecraftserver", "fortnite", "fortniteclient-win64-shipping",
     "pubg", "pubg lite", "apex", "apex legends", "apexlauncher",
@@ -131,7 +137,7 @@ ENTERTAINMENT_PROCESSES = [
     "绝地求生", "pubg mobile", "和平精英", "crossfire", "穿越火线",
     "dnf", "地下城与勇士", "梦幻西游", "问道", "剑网3", "jx3",
     "天涯明月刀", "逆水寒", "第五人格", "identity v",
-    "bilibili client", "bilibili pc", "bilibili app",
+    "bilibili", "bilibili client", "bilibili pc", "bilibili app",
     "youtube music", "youtube gaming", "youtube desktop",
     "netflix app", "hulu", "disney+", "disneyplus",
     "hbo max", "hbomax", "twitch", "twitch studio",
@@ -139,27 +145,35 @@ ENTERTAINMENT_PROCESSES = [
     "netease cloud music", "cloudmusic", "网易云音乐", "qqmusic", "qq音乐",
     "kugou", "酷狗音乐", "kuwo", "酷我音乐", "qianqian", "千千音乐",
     "xiami", "虾米音乐", "vlc", "vlc.exe", "wmplayer", "windows media player",
-    "potplayer", "gom player", "kmplayer", "mpc-hc", "mpc-be",
+    "potplayer", "potplayermini", "potplayermini64", "gom player", "kmplayer",
+    "mpc-hc", "mpc-be",
     "weixin", "wechat", "wechatweb", "qq", "qq.exe", "qqmusic",
     "weibo", "weibo.exe", "微博", "twitter", "facebook", "instagram",
     "tiktok", "douyin", "抖音", "kuaishou", "快手",
     "xhs", "小红书", "zhihu", "知乎", "tieba", "贴吧",
-    "snapchat", "telegram", "discord", "slack", "zoom", "teams",
+    "snapchat", "telegram", "discord", "slack",
     "skype", "line", "kakaotalk", "whatsapp", "viber",
     "emulator", "模拟器", "nox", "noxplayer", "bluestacks", "蓝叠",
     "memu", "ldplayer", "雷电模拟器", "tencent gaming buddy", "gameloop",
 ]
 
 STUDY_PROCESSES = [
-    "word", "excel", "powerpoint", "powerpnt", "outlook", "onenote",
+    "word", "winword", "excel", "powerpoint", "powerpnt", "outlook", "onenote",
     "notepad", "notepad++", "sublime", "sublime text", "vscode", "code",
-    "workbuddy", "codebuddy", "trae",
+    "workbuddy", "codebuddy", "trae", "chatgpt", "codex", "openai", "claude",
+    "claudecode", "cursor", "windsurf", "copilot", "codeium", "github desktop",
     "pycharm", "idea", "intellij", "eclipse", "netbeans", "visual studio",
+    "devenv", "studio64", "android studio",
     "adobe reader", "acrobat", "pdf", "pdf reader", "foxit reader",
     "zotero", "endnote", "mendeley", "citavi", "jabref",
     "matlab", "mathematica", "maple", "spss", "sas", "stata",
-    "origin", "originpro", "graphpad", "sigmaplot", "chemdraw",
+    "originpro", "graphpad", "sigmaplot", "chemdraw",
     "autocad", "solidworks", "catia", "ansys", "abaqus",
+    # 终端/容器/开发工具：前台终端是生产力活动；后台进程仍不会参与判定
+    "powershell", "pwsh", "windowsterminal", "windows terminal", "wt", "cmd", "conhost",
+    "terminal", "wsl", "docker desktop", "dockerdesktop",
+    # 视频会议/网课工具（青少年场景下 Zoom/Teams 基本是上网课，不再判娱乐）
+    "zoom", "teams", "ms-teams", "msteams", "wemeetapp", "腾讯会议", "钉钉",
 ]
 
 
@@ -233,6 +247,7 @@ def _get_foreground_process():
 def analyze_processes(running_processes):
     """返回 (category, confidence, detail)。浏览器/java 视为中性（confidence=0，不贡献）。"""
     for proc in running_processes:
+        proc = (proc or '').lower()
         for hint in BROWSER_HINTS:
             if _match_token(proc, hint):
                 return ('idle', 0.0, f'browser:{proc}')
@@ -246,6 +261,80 @@ def analyze_processes(running_processes):
             if _match_token(proc, ep):
                 return ('entertainment', 0.90, f'ent_proc:{proc}')
     return ('idle', 0.0, 'no_match')
+
+
+def _domain_of(url):
+    """从 URL 提取主域名（去 www. 前缀）。"""
+    try:
+        from urllib.parse import urlsplit
+        host = (urlsplit(url).hostname or '').lower()
+        if host.startswith('www.'):
+            host = host[4:]
+        return host
+    except Exception:
+        return ''
+
+
+def _path_of(url):
+    try:
+        from urllib.parse import urlsplit
+        p = urlsplit(url).path or ''
+        return p.lower()
+    except Exception:
+        return ''
+
+
+# 两栖站路径细分：domain → [(path 子串, 偏向)]。
+# 命中偏向词则该两栖站给出弱学习/娱乐证据（+0.25），无命中则维持两栖平票（弃权交 OCR）。
+# 仅在能读到浏览器 URL 时生效（见 browser_url；Chromium 多数情况读不到，此处为前向兼容）。
+DEFAULT_URL_PATH_RULES = {
+    'zhihu.com': [('question', 'study'), ('column', 'study'), ('pin', 'study'),
+                  ('zvideo', 'entertainment'), ('video', 'entertainment')],
+    'bilibili.com': [('read', 'study'), ('cheese', 'study'),
+                     ('video', 'ambiguous'), ('bangumi', 'entertainment')],
+    'youtube.com': [('/watch', 'ambiguous'), ('/edu', 'study'),
+                    ('shorts', 'entertainment'), ('gaming', 'entertainment')],
+    'baidu.com': [('wenku', 'study'), ('xueshu', 'study'), ('baike', 'study'),
+                  ('tieba', 'entertainment'), ('video', 'entertainment')],
+    'iqiyi.com': [('default', 'entertainment')],
+    'youku.com': [('default', 'entertainment')],
+}
+
+
+def analyze_url(url):
+    """把浏览器 URL 判为 study/entertainment/idle。
+
+    策略：域名命中站点声誉表 → 高置信（0.9）；两栖站 → 走路径规则，命中偏向词给
+    弱证据（0.55），无命中维持 idle（弃权）；域名未知 → idle（不贡献，交标题/OCR）。
+    返回 (category, confidence, detail)。
+    """
+    if not url:
+        return ('idle', 0.0, 'no_url')
+    domain = _domain_of(url)
+    if not domain:
+        return ('idle', 0.0, 'bad_url')
+    # 域名 → 站点声誉（取最长匹配的站点令牌）
+    site_cat, site_token = None, None
+    for token in SITE_REPUTATION.get('entertainment', []):
+        if token in domain:
+            return ('entertainment', 0.90, f'url_ent:{domain}')
+    for token in SITE_REPUTATION.get('study', []):
+        if token in domain:
+            return ('study', 0.90, f'url_study:{domain}')
+    # 两栖站：路径细分（匹配 domain+path，覆盖子域名如 baike.baidu.com）
+    rules = _cfg('url_path_rules', DEFAULT_URL_PATH_RULES) or DEFAULT_URL_PATH_RULES
+    for dkey, prules in rules.items():
+        if dkey in domain:
+            hay = domain + _path_of(url)
+            for pat, bias in prules:
+                if pat == 'default' or pat in hay:
+                    if bias == 'study':
+                        return ('study', 0.55, f'url_path:{dkey}/{pat}')
+                    if bias == 'entertainment':
+                        return ('entertainment', 0.55, f'url_path:{dkey}/{pat}')
+                    break  # ambiguous → 维持两栖，弃权
+            return ('idle', 0.0, f'url_ambiguous:{dkey}')
+    return ('idle', 0.0, f'url_unknown:{domain}')
 
 
 def _match_site(low_title):
@@ -298,6 +387,11 @@ def analyze_title(title):
     if study_score == 0 and ent_score == 0:
         return ('idle', 0.0, site_token, 'no_signal')
 
+    # 两栖站（bilibili/youtube/百度…）无关键词佐证 → 学习/娱乐打平，
+    # 不应默认判 study（鬼畜视频、综艺都曾因此误判）：弃权，交视觉兜底
+    if abs(study_score - ent_score) < 1e-9:
+        return ('idle', 0.0, site_token, 'ambiguous_tie')
+
     total = study_score + ent_score
     if study_score >= ent_score:
         cat = 'study'
@@ -340,22 +434,21 @@ def resolve_idle_unknown(fg_process, title, activity):
 
     返回 (activity, reason, uncertain)：
     - 无前台进程且无标题 → idle（锁屏/离开），reason=no_foreground，不触发视觉兜底
-    - 前台是桌面外壳进程 → idle（桌面/搜索/锁屏界面），reason=desktop_shell
-    - 前台是浏览器但标题为空 → idle（浏览器空白页），reason=browser_blank
-    - 其余有界面但规则未命中 → unknown（无法判定），reason=rules_uncovered，触发视觉兜底
+    - 前台是桌面外壳进程且没有窗口标题 → idle（桌面/搜索/锁屏界面），reason=desktop_shell
+    - 其余有前台界面但规则未命中 → unknown（无法判定），reason=rules_uncovered，触发视觉兜底
+
+    注意：不再根据键鼠最后输入时间判定 idle。视频、小说、网课等内容可以在
+    没有点击/移动鼠标时持续进行；浏览器标题为空也不能证明用户离开，应交给 OCR。
     """
     if activity != 'unknown':
         return activity, 'signal', False
     low_title = (title or '').strip()
     fg_low = (fg_process or '').lower()
     is_shell = fg_low in DESKTOP_SHELL_PROCESSES
-    is_browser = any(h in fg_low for h in BROWSER_HINTS)
     if not fg_low and not low_title:
         return 'idle', 'no_foreground', False
-    if is_shell:
+    if is_shell and not low_title:
         return 'idle', 'desktop_shell', False
-    if is_browser and not low_title:
-        return 'idle', 'browser_blank', False
     return 'unknown', 'rules_uncovered', True
 
 
@@ -551,6 +644,25 @@ def multimodal_fusion_analysis(tesseract_available=False, return_meta=False):
         signals.append({'category': tcat, 'weight': WEIGHTS['title'], 'confidence': tconf})
     breakdown['title'] = (tcat, tconf, site, tdetail)
 
+    # 浏览器地址栏 URL 信号（可选，best-effort）：前台是浏览器时尝试读取。
+    # Chromium 在地址栏未聚焦时通常不暴露真实 URL（安全限制），读不到则跳过，
+    # 由标题/OCR 兜底。URL 仅在标题无定论（no_signal / 两栖站平票）时介入，
+    # 用更具体的路径证据打破平局——绝不与已定论的标题信号叠加（避免双重计入）。
+    url = None
+    is_browser = fg and any(h in fg for h in BROWSER_HINTS)
+    if is_browser:
+        try:
+            from .browser_url import get_browser_url
+            url = get_browser_url()
+        except Exception as e:
+            logger.debug(f"浏览器 URL 信号不可用: {e}")
+    ucat, uconf, udetail = ('idle', 0.0, 'no_url')
+    if url and tconf == 0:  # 仅当标题无定论时，URL 才作为补充证据
+        ucat, uconf, udetail = analyze_url(url)
+        if uconf > 0:
+            signals.append({'category': ucat, 'weight': WEIGHTS['title'], 'confidence': uconf})
+    breakdown['url'] = (ucat, uconf, udetail)
+
     image = None
     # 客户端视觉模型已下线（下载地址 404）：不再做本地 OCR/ONNX 识别，
     # 视觉兜底统一走服务端（仅"不确定"样本上传截图，见下方 VLM/server_vision 分支）
@@ -570,8 +682,23 @@ def multimodal_fusion_analysis(tesseract_available=False, return_meta=False):
 
     activity, dconf, scores, uncertain = fuse_signals(signals)
 
-    # 区分「真正空闲」与「规则未覆盖」（unknown）：真空闲不触发视觉兜底
+    # 区分「真正空闲」与「规则未覆盖」（unknown）：只有无前台窗口/桌面外壳才是 idle
     activity, reason, uncertain = resolve_idle_unknown(fg, title, activity)
+
+    # 家长覆盖规则（标注飞轮）：权威覆盖规则判定——孩子自装应用等长尾
+    # 全局关键词表追不上，家长看板标注一次即永久生效（优先级最高，跳过视觉兜底）
+    override = None
+    try:
+        from .overrides import get_override
+        override = get_override(fg, title)
+    except Exception as e:
+        logger.debug(f"覆盖规则匹配失败: {e}")
+    if override and override[0] in ('study', 'entertainment', 'idle'):
+        activity, dconf = override[0], override[1]
+        reason, uncertain = 'parent_override', False
+        logger.info(f"家长覆盖规则生效: {fg}/{title} -> {activity} (conf {dconf:.2f})")
+    breakdown['override'] = override
+
     breakdown['fusion'] = (activity, dconf, scores, uncertain)
     breakdown['reason'] = reason
 
@@ -593,6 +720,8 @@ def multimodal_fusion_analysis(tesseract_available=False, return_meta=False):
                 if vconf >= CONF_THRESHOLD and vcat in ('study', 'entertainment'):
                     activity = vcat
                     dconf = vconf
+                    reason = 'vision_fallback'
+                    uncertain = False
                     vision_overridden = True
                     logger.info(f"视觉兜底判定: {vcat} (置信度 {vconf:.3f})")
             except Exception as e:
@@ -603,6 +732,11 @@ def multimodal_fusion_analysis(tesseract_available=False, return_meta=False):
         pconf, tconf, 0.0 if 'text_llm' not in breakdown else breakdown['text_llm'][1],
         'ocr' if (vision_overridden and _cfg('enable_server_vision', False)) else
         'vlm' if vision_overridden else None)
+    if override:
+        decision_source = 'parent_override'
+    # 视觉兜底可能已更新最终活动/置信度，诊断明细必须反映最终结果。
+    breakdown['fusion'] = (activity, dconf, scores, uncertain)
+    breakdown['reason'] = reason
     breakdown['decision_source'] = decision_source
 
     logger.info(f"融合结果: {activity} (决策置信度 {dconf}) 明细 {breakdown}")

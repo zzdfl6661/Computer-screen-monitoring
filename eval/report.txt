@@ -1,60 +1,86 @@
 ======================================================================
 学习/娱乐分类器 前后对比评测
 ======================================================================
-样本数: 48
-
-旧分类器准确率 :  54.2%   (26/48)
-新分类器准确率 : 100.0%   (48/48)
-提升           : +45.8 个百分点
-
--- 旧分类器 各类召回 --
-         study:   8.7%
-  entertainment:  95.0%
-          idle: 100.0%
--- 新分类器 各类召回 --
-         study: 100.0%
-  entertainment: 100.0%
-          idle: 100.0%
-
--- 旧分类器 混淆矩阵 --
-                预测
-                     study entertainment         idle
-实际    study             2            4           17
-实际 entertainment             0           19            1
-实际     idle             0            0            5
-
--- 新分类器 混淆矩阵 --
-                预测
-                     study entertainment         idle
-实际    study            23            0            0
-实际 entertainment             0           20            0
-实际     idle             0            0            5
-
--- 由错转对 (旧错→新对): 22 个 --
-  [S1] 真值=study  旧=idle -> 新=study  | main.py - Visual Studio Code
-  [S2] 真值=study  旧=idle -> 新=study  | 两数之和 - LeetCode
-  [S3] 真值=study  旧=idle -> 新=study  | 机器学习 吴恩达 coursera
-  [S4] 真值=study  旧=entertainment -> 新=study  | 微积分 网课 bilibili
-  [S5] 真值=study  旧=entertainment -> 新=study  | 知乎 高考数学解题思路
-  [S6] 真值=study  旧=idle -> 新=study  | Python 基础教程 菜鸟教程
-  [S8] 真值=study  旧=idle -> 新=study  | 中国大学MOOC 高等数学
-  [S9] 真值=study  旧=idle -> 新=study  | 腾讯会议 数学直播课
-  [S10] 真值=study  旧=idle -> 新=study  | 微积分教材.pdf
-  [S11] 真值=study  旧=idle -> 新=study  | arXiv 深度学习论文
-  [S12] 真值=study  旧=idle -> 新=study  | 考研真题 百度文库
-  [S14] 真值=study  旧=entertainment -> 新=study  | B站 考研政治 复习
-  [S15] 真值=study  旧=idle -> 新=study  | 网易云课堂 Python 入门
-  [S16] 真值=study  旧=idle -> 新=study  | MyProject - IntelliJ IDEA
-  [S17] 真值=study  旧=idle -> 新=study  | github 项目 README
-  [S18] 真值=study  旧=idle -> 新=study  | Wikipedia 量子力学
-  [S19] 真值=study  旧=idle -> 新=study  | 成绩统计.xlsx - Excel
-  [S20] 真值=study  旧=idle -> 新=study  | juejin 前端学习笔记
-  [S21] 真值=study  旧=entertainment -> 新=study  | B站 学习 视频 教程
-  [S22] 真值=study  旧=idle -> 新=study  | 高等数学 课程 复习 笔记
-  [S23] 真值=study  旧=idle -> 新=study  | game_utils.py - Visual Studio Code
-  [E7] 真值=entertainment  旧=idle -> 新=entertainment  | 微信
-
--- 回归 (旧对→新错): 0 个 --
-
--- 仍双双错误: 0 个 --
+----------------------------------------------------------------------
+样本集 v1 代表性场景集: 48 条
+  旧分类器准确率       :  56.2%
+  新分类器 严格准确率  : 100.0%   (46/48)
+  新分类器 决策准确率  : 100.0%   (46/46, 不含弃权)
+  弃权率(unknown)      :   4.2%   (2/48)  → 交视觉兜底
+  -- 新分类器 各类召回 --
+             study: 100.0%   (弃权 0 条)
+     entertainment: 100.0%   (弃权 0 条)
+              idle: 100.0%   (弃权 2 条)
+  -- 新分类器 混淆矩阵 --
+                  预测
+                       study entertainment         idle
+  实际    study            23            0            0
+  实际 entertainment             0           20            0
+  实际     idle             0            0            3
+  -- 回归 (旧对→新错): 2 个 --
+    [I3] 真值=idle  旧=idle -> 新=unknown  |
+    [I4] 真值=idle  旧=idle -> 新=unknown  | 搜索
+  -- 新分类器未命对样本: 2 个 (含弃权) --
+    [I3][plain] 真值=idle -> 预测=unknown  |
+    [I4][plain] 真值=idle -> 预测=unknown  | 搜索
+----------------------------------------------------------------------
+样本集 v2 真实+对抗+盲区集: 165 条
+  旧分类器准确率       :  46.1%
+  新分类器 严格准确率  :  98.7%   (152/165)
+  新分类器 决策准确率  :  98.7%   (152/154, 不含弃权)
+  弃权率(unknown)      :   6.7%   (11/165)  → 交视觉兜底
+  -- 新分类器 各类召回 --
+             study: 100.0%   (弃权 0 条)
+     entertainment:  96.9%   (弃权 5 条)
+              idle: 100.0%   (弃权 6 条)
+  -- 新分类器 混淆矩阵 --
+                  预测
+                       study entertainment         idle
+  实际    study            86            0            0
+  实际 entertainment             2           62            0
+  实际     idle             0            0            4
+  -- 分 tag 统计 (ok/abstain/n) --
+        semantic:  27/ 1弃权/ 30  严格准确率  90.0%
+            mooc:  19/ 0弃权/ 19  严格准确率 100.0%
+             gap:  18/ 0弃权/ 18  严格准确率 100.0%
+             ide:  17/ 0弃权/ 17  严格准确率 100.0%
+     adversarial:  15/ 1弃权/ 16  严格准确率  93.8%
+            game:  15/ 0弃权/ 15  严格准确率 100.0%
+           video:  12/ 3弃权/ 15  严格准确率  80.0%
+            idle:   4/ 6弃权/ 10  严格准确率  40.0%
+          office:   8/ 0弃权/  8  严格准确率 100.0%
+          social:   8/ 0弃权/  8  严格准确率 100.0%
+            tool:   5/ 0弃权/  5  严格准确率 100.0%
+           music:   4/ 0弃权/  4  严格准确率 100.0%
+  -- 回归 (旧对→新错): 13 个 --
+    [V2-E028] 真值=entertainment  旧=entertainment -> 新=unknown  | 鬼畜全明星 - 哔哩哔哩
+    [V2-E029] 真值=entertainment  旧=entertainment -> 新=unknown  | 奔跑吧兄弟第十季 - 爱奇艺
+    [V2-E031] 真值=entertainment  旧=entertainment -> 新=unknown  | 密室大逃脱 - 芒果TV
+    [V2-E034] 真值=entertainment  旧=entertainment -> 新=unknown  | C罗世界杯集锦 - YouTube
+    [V2-E057] 真值=entertainment  旧=entertainment -> 新=study  | 如何评价电影《流浪地球》 - 知乎
+    [V2-E058] 真值=entertainment  旧=entertainment -> 新=study  | 有什么好玩的手游推荐？ - 知乎
+    [V2-E059] 真值=entertainment  旧=entertainment -> 新=unknown  | 明日方舟攻略 - 哔哩哔哩
+    [V2-I003] 真值=idle  旧=idle -> 新=unknown  | 任务栏
+    [V2-I005] 真值=idle  旧=idle -> 新=unknown  | 开始菜单
+    [V2-I006] 真值=idle  旧=idle -> 新=unknown  |
+    [V2-I007] 真值=idle  旧=idle -> 新=unknown  | Windows 锁屏
+    [V2-I009] 真值=idle  旧=idle -> 新=unknown  | 设置
+    [V2-I010] 真值=idle  旧=idle -> 新=unknown  | Windows 设置 - 蓝牙
+  -- 新分类器未命对样本: 13 个 (含弃权) --
+    [V2-E028][video] 真值=entertainment -> 预测=unknown  | 鬼畜全明星 - 哔哩哔哩
+    [V2-E029][video] 真值=entertainment -> 预测=unknown  | 奔跑吧兄弟第十季 - 爱奇艺
+    [V2-E031][video] 真值=entertainment -> 预测=unknown  | 密室大逃脱 - 芒果TV
+    [V2-E034][adversarial] 真值=entertainment -> 预测=unknown  | C罗世界杯集锦 - YouTube
+    [V2-E057][semantic] 真值=entertainment -> 预测=study  | 如何评价电影《流浪地球》 - 知乎
+    [V2-E058][semantic] 真值=entertainment -> 预测=study  | 有什么好玩的手游推荐？ - 知乎
+    [V2-E059][semantic] 真值=entertainment -> 预测=unknown  | 明日方舟攻略 - 哔哩哔哩
+    [V2-I003][idle] 真值=idle -> 预测=unknown  | 任务栏
+    [V2-I005][idle] 真值=idle -> 预测=unknown  | 开始菜单
+    [V2-I006][idle] 真值=idle -> 预测=unknown  |
+    [V2-I007][idle] 真值=idle -> 预测=unknown  | Windows 锁屏
+    [V2-I009][idle] 真值=idle -> 预测=unknown  | 设置
+    [V2-I010][idle] 真值=idle -> 预测=unknown  | Windows 设置 - 蓝牙
 ======================================================================
+汇总:
+  v1 代表性场景集: 旧 56.2% -> 新 严格 100.0% / 决策 100.0% (弃权 2/48)
+  v2 真实+对抗+盲区集: 旧 46.1% -> 新 严格 98.7% / 决策 98.7% (弃权 11/165)

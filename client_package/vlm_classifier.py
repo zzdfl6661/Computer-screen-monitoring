@@ -20,6 +20,11 @@ try:
 except Exception:
     from config import ConfigManager
 
+try:
+    from .http_client import urlopen
+except Exception:
+    from http_client import urlopen
+
 logger = logging.getLogger(__name__)
 
 VLM_PROMPT = (
@@ -107,7 +112,7 @@ class VLMClassifier:
                      'Authorization': f'Bearer {token}'},
             method='POST',
         )
-        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
+        with urlopen(req, timeout=_TIMEOUT) as resp:
             data = json.loads(resp.read().decode('utf-8'))
 
         activity = data.get('activity')
@@ -135,7 +140,7 @@ class VLMClassifier:
             data=json.dumps(payload).encode('utf-8'),
             headers={'Content-Type': 'application/json'},
         )
-        with urllib.request.urlopen(req, timeout=_TIMEOUT) as resp:
+        with urlopen(req, timeout=_TIMEOUT) as resp:
             data = json.loads(resp.read().decode('utf-8'))
         text = (data.get('response', '') or '').lower()
 

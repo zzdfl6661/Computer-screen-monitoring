@@ -3,13 +3,14 @@ from typing import Literal, Optional
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
-from datetime import datetime
 
 from ..database import get_db
 from ..models import ActivityLog
 from ..auth.dependencies import get_current_device
 from ..auth.models import Device
 from ..utils.rate_limit import rate_limiter
+from ..utils.time import now_local_iso
+from ..utils.classification import normalize_unknown, guard_productivity_result
 from logger import setup_logger
 
 router = APIRouter()
@@ -47,21 +48,41 @@ def check_activity(
     db: Session = Depends(get_db),
     device: Device = Depends(get_current_device)
 ):
-    activity = request.activity
+    activity, guarded_source, guarded_reason = guard_productivity_result(
+        request.activity, request.process)
+    activity, normalized_source, normalized_reason = normalize_unknown(
+        activity, request.process, request.title)
+    normalized_source = normalized_source or guarded_source
+    normalized_reason = normalized_reason or guarded_reason
+    confidence = request.confidence
+    if normalized_source and (confidence is None or confidence < 0.85):
+        confidence = 0.85
     message, status = _ACTIVITY_RESULT[activity]
 
+    if normalized_source:
+        original_source = request.decision_source
+        decision_source = (
+            normalized_source
+            if not original_source or original_source == 'none'
+            else f"{original_source}+{normalized_source}"
+        )
+    else:
+        decision_source = request.decision_source
+    reason = normalized_reason or request.reason
+
     logger.info(f"收到活动检查请求: activity={activity}, device={device.device_name}, "
-                f"conf={request.confidence}, source={request.decision_source}, reason={request.reason}")
+                f"conf={confidence}, source={decision_source}, reason={reason}, "
+                f"process={request.process!r}, title={request.title!r}")
 
     new_log = ActivityLog(
-        timestamp=datetime.now().isoformat(),
+        timestamp=now_local_iso(),
         activity=activity,
         message=message,
         source='client',
         device_id=device.device_token,
-        confidence=request.confidence,
-        decision_source=request.decision_source,
-        reason=request.reason,
+        confidence=confidence,
+        decision_source=decision_source,
+        reason=reason,
         process=request.process,
         title=request.title,
     )

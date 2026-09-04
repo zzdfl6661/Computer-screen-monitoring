@@ -1,11 +1,22 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import or_
+from datetime import datetime, timedelta
 
 from ..database import get_db
 from ..models import ActivityLog
 
 router = APIRouter()
+
+
+def _exclusive_end_boundary(value: str) -> str:
+    """将日期型结束条件转换为次日零点，保证包含结束日期全天记录。"""
+    if value and len(value) == 10:
+        try:
+            return (datetime.fromisoformat(value) + timedelta(days=1)).isoformat()
+        except ValueError:
+            pass
+    return value
 
 
 @router.get("/api/search")
@@ -35,6 +46,8 @@ def search_logs(
                 ActivityLog.message.like(f'%{keyword}%'),
                 ActivityLog.source.like(f'%{keyword}%'),
                 ActivityLog.reason.like(f'%{keyword}%'),
+                ActivityLog.process.like(f'%{keyword}%'),
+                ActivityLog.title.like(f'%{keyword}%'),
             )
         )
 
@@ -42,7 +55,7 @@ def search_logs(
         query = query.filter(ActivityLog.timestamp >= start_date)
 
     if end_date:
-        query = query.filter(ActivityLog.timestamp <= end_date)
+        query = query.filter(ActivityLog.timestamp < _exclusive_end_boundary(end_date))
 
     if device:
         query = query.filter(ActivityLog.device_id == device)
@@ -65,6 +78,8 @@ def search_logs(
             'confidence': log.confidence,
             'decision_source': log.decision_source,
             'reason': log.reason,
+            'process': log.process,
+            'title': log.title,
         }
         for log in results
     ]

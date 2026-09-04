@@ -1,12 +1,13 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import func
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 from ..database import get_db
 from ..models import ActivityLog
 from ..auth.models import Device
 from ..utils.duration import compute_minutes
+from ..utils.time import now_local
 
 router = APIRouter()
 
@@ -18,10 +19,10 @@ def _period_filter(query, days: int = None, device: str = None):
     if days == 0:
         pass
     elif days and days > 0:
-        start = (datetime.now() - timedelta(days=days - 1)).date().isoformat()
+        start = (now_local() - timedelta(days=days - 1)).date().isoformat()
         query = query.filter(ActivityLog.timestamp >= start)
     else:
-        today_date = datetime.now().date().isoformat()
+        today_date = now_local().date().isoformat()
         query = query.filter(ActivityLog.timestamp.like(f'{today_date}%'))
     return query
 
@@ -34,8 +35,8 @@ def get_stats(
 ):
     """统计与时长。
 
-    口径修正：total_count = study + entertainment + unknown（有效样本），
-    idle（空闲）单列，不再混进总数 —— 与趋势图（只画 study/entertainment）对齐。
+    家长口径：total_count 只统计已归类的 study + entertainment；
+    idle/unknown 保留为诊断字段，不再进入“有效记录”主卡片。
     时长由连续同活动样本分段聚合得到（见 utils/duration.py）。
     """
     base = _period_filter(db.query(ActivityLog), days, device)
@@ -48,7 +49,7 @@ def get_stats(
     entertainment_count = counts.get('entertainment', 0)
     idle_count = counts.get('idle', 0)
     unknown_count = counts.get('unknown', 0)
-    total_count = study_count + entertainment_count + unknown_count
+    total_count = study_count + entertainment_count
 
     rows = base.with_entities(ActivityLog.timestamp, ActivityLog.activity).order_by(
         ActivityLog.timestamp.asc()).all()
@@ -60,6 +61,7 @@ def get_stats(
         'idle_count': idle_count,
         'unknown_count': unknown_count,
         'total_count': total_count,
+        'classified_count': total_count,
         'study_minutes': minutes.get('study', 0.0),
         'entertainment_minutes': minutes.get('entertainment', 0.0),
         'idle_minutes': minutes.get('idle', 0.0),
@@ -93,7 +95,7 @@ def get_unknown_top(
     if device:
         query = query.filter(ActivityLog.device_id == device)
     if days and days > 0:
-        start = (datetime.now() - timedelta(days=days - 1)).date().isoformat()
+        start = (now_local() - timedelta(days=days - 1)).date().isoformat()
         query = query.filter(ActivityLog.timestamp >= start)
 
     rows = query.all()
@@ -112,6 +114,7 @@ def get_unknown_top(
                 'timestamp': r.timestamp,
                 'process': r.process,
                 'title': r.title,
+                'device_id': r.device_id,
                 'confidence': r.confidence,
                 'reason': r.reason,
             })

@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 
 from ..database import get_db
 from ..models import ActivityLog
+from ..utils.time import now_local
 
 router = APIRouter()
 
@@ -13,7 +14,7 @@ def get_trend(
     hours: int = 24,
     db: Session = Depends(get_db)
 ):
-    now = datetime.now()
+    now = now_local().replace(tzinfo=None)
     start_time = (now - timedelta(hours=hours)).isoformat()
     
     logs = db.query(ActivityLog.timestamp, ActivityLog.activity)\

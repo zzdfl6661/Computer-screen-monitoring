@@ -4,6 +4,7 @@ import logging
 
 from .config import ConfigManager
 from .capture import capture_screen
+from .http_client import session
 from logger import setup_logger
 
 logger = setup_logger('feedback')
@@ -48,7 +49,7 @@ def send_feedback(detected_activity, actual_activity, feedback_type):
     }
     
     try:
-        response = requests.post(feedback_url, json=data, headers=headers, timeout=5)
+        response = session.post(feedback_url, json=data, headers=headers, timeout=5)
         if response.status_code == 200:
             logger.info(f"反馈提交成功: {response.text}")
             return response.json()

@@ -8,6 +8,8 @@ services:
       - DATABASE_URL=postgresql://${DB_USER}:${DB_PASSWORD}@db:5432/${DB_NAME}
       - JWT_SECRET_KEY=${JWT_SECRET_KEY}
       - APP_ENV=${APP_ENV}
+      - TZ=Asia/Shanghai
+      - APP_TIMEZONE=Asia/Shanghai
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
       - STORE_IMAGE_RAW=${STORE_IMAGE_RAW:-0}
     depends_on:
@@ -32,10 +34,12 @@ services:
       - POSTGRES_USER=${DB_USER}
       - POSTGRES_PASSWORD=${DB_PASSWORD}
       - POSTGRES_DB=${DB_NAME}
+      - TZ=Asia/Shanghai
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - learning-app-network
+    command: ["postgres", "-c", "timezone=Asia/Shanghai"]
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
       interval: 10s

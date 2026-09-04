@@ -2,7 +2,8 @@
 服务端视觉分析（OCR + 规则判级，多信号融合）。
 
 接收客户端上传的降采样截图（768px JPEG）+ 前台进程 + 窗口标题：
-  1. OCR 提取界面文字（灰度/放大/对比度预处理 + psm 6/11 择优）
+  1. OCR 提取界面文字（RapidOCR 主路径，对中文截图 UI/深色主题/小字体识别率远高于
+     tesseract；回退 pytesseract psm 6/11 择优 + chi_sim→eng 语言回退）
   2. 融合三个证据：前台进程、窗口标题、OCR 文本 → 判 study/entertainment/idle/unknown
   3. 生产力工具（Docker Desktop/IDE）与开发终端（docker/powershell/cmd/WindowsTerminal/wsl）
      使用组合规则：工具进程 + 标题/OCR 含开发词 → 学习证据，避免把终端一律判学习
@@ -23,10 +24,27 @@ except Exception:
     pytesseract = None
 
 try:
+    from rapidocr_onnxruntime import RapidOCR
+    _rapidocr = RapidOCR()
+except Exception as exc:
+    # 不再静默降级：依赖缺失时启动日志必须明确说明实际会使用 Tesseract。
+    logger.warning("RapidOCR 初始化失败，将回退 Tesseract: %s", exc)
+    _rapidocr = None
+
+try:
     from PIL import Image, ImageOps
 except Exception:
     Image = None
     ImageOps = None
+
+
+def active_ocr_engine() -> str:
+    """返回服务端当前真正可用的 OCR 引擎，供启动日志和健康检查诊断。"""
+    if _rapidocr is not None:
+        return "rapidocr"
+    if pytesseract is not None and Image is not None:
+        return "tesseract"
+    return "unavailable"
 
 SITE_REPUTATION = {
     "study": [
@@ -41,7 +59,7 @@ SITE_REPUTATION = {
         "netflix", "hulu", "disney", "hbo", "twitch", "tiktok", "douyin",
         "抖音", "kuaishou", "快手", "weibo", "微博", "instagram", "facebook",
         "twitter", "snapchat", "spotify", "apple music", "netease cloud music",
-        "网易云音乐", "qq音乐", "酷狗", "酷我", "steam", "epic", "origin",
+        "网易云音乐", "qq音乐", "酷狗", "酷我", "steam", "epic",
         "uplay", "battlenet", "weixin", "wechat", "王者荣耀", "英雄联盟",
         "原神", "和平精英", "pubg", "fortnite", "steamcommunity",
         "xiaohongshu", "小红书", "tieba", "贴吧",
@@ -54,7 +72,7 @@ SITE_REPUTATION = {
 }
 
 ENTERTAINMENT_KEYWORDS = [
-    "game", "games", "gaming", "play", "player", "steam", "epic", "origin",
+    "game", "games", "gaming", "play", "player", "steam", "epic",
     "uplay", "battlefield", "call of duty", "csgo", "valorant", "league of legends",
     "lol", "dota", "minecraft", "fortnite", "pubg", "apex", "overwatch",
     "world of warcraft", "wow", "fifa", "nba", "nfl", "mlb", "rocket league",
@@ -100,6 +118,10 @@ PRODUCTIVITY_PROCESSES = [
     "eclipse", "code.exe", "vscode", "visual studio", "devenv",
     "notepad++", "sublime", "zotero", "obsidian", "typora", "wps", "word", "excel",
     "powerpoint", "onenote", "matlab", "anaconda", "jupyter",
+    # AI 编程/学习助手与前台开发终端：不能因为 OCR 看到了“娱乐”字样就误报
+    "chatgpt", "codex", "openai", "claude", "claudecode", "cursor", "windsurf",
+    "copilot", "codeium", "github desktop", "powershell", "pwsh", "windowsterminal",
+    "windows terminal", "wt.exe", "cmd.exe", "conhost", "terminal", "wsl",
 ]
 
 # 中性开发工具：本身不等于学习，需标题/OCR 含开发词才给证据
@@ -193,6 +215,10 @@ def classify_text(text: str):
     if study_score == 0 and ent_score == 0:
         return ("unknown", 0.0, f"site={site_cat} no_signal")
 
+    # 两栖站无关键词佐证 → 打平，不默认判 study（与客户端 classify.py 一致）
+    if abs(study_score - ent_score) < 1e-9:
+        return ("unknown", 0.0, f"site={site_cat} ambiguous_tie")
+
     total = study_score + ent_score
     if study_score >= ent_score:
         cat = "study"
@@ -284,12 +310,31 @@ def _preprocess_ocr_image(img):
 def ocr_bytes(data: bytes, lang: str = "chi_sim+eng") -> str:
     """对图片字节流做 OCR，返回提取文本；OCR 不可用/失败时返回空串。
 
-    改进：预处理（灰度/放大/对比度）后，分别用 --psm 6（块）与 --psm 11（稀疏文本）
-    各跑一次，取识别出文字更多的一次（终端/IDE/小字体界面效果更好）。
-    容错：tessdata 缺 chi_sim 时自动回退到 eng，避免整个 OCR 静默失败。
+    引擎优先级：RapidOCR（onnx，中文截图 UI 识别率远高于 tesseract，pip 即装，
+    无需系统级 tesseract 二进制与 chi_sim 训练数据）→ 回退 pytesseract（psm 6/11
+    择优 + chi_sim→eng 语言回退）。两者都不可用时融合器靠 process/title 兜底。
     """
+    # 1) RapidOCR 主路径：直接吃 JPEG 字节解码后的 ndarray，无需 PIL 预处理
+    #    （RapidOCR 内部自带 det+rec+多语言，对深色主题/小字体友好）
+    if _rapidocr is not None:
+        try:
+            import numpy as np
+            import cv2
+            arr = np.frombuffer(data, np.uint8)
+            img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+            if img is not None:
+                result, _ = _rapidocr(img)
+                texts = [r[1] for r in (result or []) if r and r[1]]
+                joined = " ".join(texts).strip()
+                if joined:
+                    return joined
+                logger.debug("RapidOCR 未提取到文本，回退 pytesseract")
+        except Exception as e:
+            logger.warning(f"RapidOCR 失败，回退 pytesseract: {e}")
+
+    # 2) pytesseract 回退路径（需要系统安装 tesseract + chi_sim 训练数据）
     if pytesseract is None or Image is None:
-        logger.warning("pytesseract/PIL 不可用，OCR 不可用")
+        logger.debug("pytesseract/PIL 不可用，OCR 返回空（融合器靠 process/title 兜底）")
         return ""
     try:
         img = Image.open(io.BytesIO(data))
@@ -306,14 +351,10 @@ def ocr_bytes(data: bytes, lang: str = "chi_sim+eng") -> str:
                 text = (pytesseract.image_to_string(
                     img, lang=attempt_lang, config=f"--psm {psm}") or "").strip()
             except Exception as e:
-                # 降噪：OCR 抛退出码（多半是某种 ps/lang 组合 tesseract 不接）
-                # 不影响融合结果（process+title 信号会兜底），仅 debug 留痕
                 logger.debug(f"OCR 跳过 psm{psm}/{attempt_lang or 'default'}: {e}")
                 continue
             if len(text) > len(best_text):
                 best_text = text
-    if not best_text:
-        logger.debug("OCR 三种语言+两种 psm 都未提取到文本（融合器会靠 process/title 兜底）")
     return best_text
 
 

@@ -8,3 +8,5 @@ requests>=2.31.0
 cryptography>=43.0.0
 sqlalchemy==2.0.36
 python-json-logger==2.0.7
+# 可选：浏览器地址栏 URL 读取（Windows UIA）。未安装时分类器自动退回纯标题判定。
+comtypes>=1.4.5

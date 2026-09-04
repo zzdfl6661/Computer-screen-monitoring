@@ -10,6 +10,7 @@ from client_package import (
 )
 from database import DatabaseManager
 from logger import setup_logger
+from client_package.single_instance import SingleInstance
 
 logger = setup_logger('main')
 config_manager = ConfigManager()
@@ -18,6 +19,11 @@ local_db = DatabaseManager('client_activity_logs.db')
 
 def main():
     logger.info("学习辅助监控系统启动中...")
+
+    instance = SingleInstance()
+    if not instance.acquire():
+        logger.warning("监控客户端已在运行，本次启动已取消")
+        return
 
     result_queue = deque(maxlen=5)
 
@@ -33,7 +39,8 @@ def main():
             activity_type, meta = multimodal_fusion_analysis(return_meta=True)
 
             logger.info(f"活动分析结果: {activity_type} (conf={meta['confidence']}, "
-                        f"source={meta['decision_source']}, reason={meta['reason']})")
+                        f"source={meta['decision_source']}, reason={meta['reason']}, "
+                        f"process={meta.get('process')!r}, title={meta.get('title')!r})")
 
             result_queue.append(activity_type)
 
@@ -69,6 +76,8 @@ def main():
     except Exception as e:
         logger.error(f"发生错误: {e}", exc_info=True)
         local_db.close()
+    finally:
+        instance.release()
 
 
 if __name__ == "__main__":

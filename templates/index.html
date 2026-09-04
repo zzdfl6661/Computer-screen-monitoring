@@ -71,9 +71,9 @@
             <div class="col-md-4">
                 <div class="card stat-card shadow-sm bg-primary text-white">
                     <div class="card-body text-center py-4">
-                        <h5 class="card-title mb-2">📋 有效记录</h5>
+                        <h5 class="card-title mb-2">📋 已识别活动</h5>
                         <h2 class="display-4 fw-bold" id="total-count">0</h2>
-                        <div class="small opacity-75">学习+娱乐+无法判定（不含空闲）</div>
+                        <div class="small opacity-75">已归类的学习+娱乐（不含空闲/未归类）</div>
                     </div>
                 </div>
             </div>
@@ -101,11 +101,11 @@
                     </div>
                     <div class="col-md-3">
                         <label class="form-label">开始日期</label>
-                        <input type="date" id="filter-start" class="form-control">
+                        <input type="date" id="filter-start" class="form-control" aria-label="开始日期" title="开始日期">
                     </div>
                     <div class="col-md-3">
                         <label class="form-label">结束日期</label>
-                        <input type="date" id="filter-end" class="form-control">
+                        <input type="date" id="filter-end" class="form-control" aria-label="结束日期" title="结束日期">
                     </div>
                     <div class="col-12">
                         <button onclick="applyFilter()" class="btn btn-primary me-2">
@@ -167,6 +167,7 @@
                                 <th>置信度</th>
                                 <th>判定依据</th>
                                 <th>原因</th>
+                                <th>前台窗口</th>
                                 <th>设备</th>
                                 <th>来源</th>
                             </tr>
@@ -175,7 +176,7 @@
                             {% for log in activity_log %}
                                 <tr class="{% if log.activity == 'study' %}table-success{% elif log.activity == 'entertainment' %}table-warning{% elif log.activity == 'unknown' %}table-danger{% else %}table-info{% endif %}">
                                     <td>{{ log.id }}</td>
-                                    <td>{{ log.timestamp }}</td>
+                                    <td data-timestamp="{{ log.timestamp }}">{{ log.timestamp }}</td>
                                     <td>
                                         <span class="badge {% if log.activity == 'study' %}bg-success{% elif log.activity == 'entertainment' %}bg-warning text-dark{% elif log.activity == 'unknown' %}bg-danger{% else %}bg-info{% endif %}">
                                             {{ log.activity }}
@@ -185,6 +186,9 @@
                                     <td>{{ '%.2f'|format(log.confidence) if log.confidence is not none else 'N/A' }}</td>
                                     <td>{{ log.decision_source or 'N/A' }}</td>
                                     <td>{{ log.reason or 'N/A' }}</td>
+                                    <td title="{{ (log.process or '') }} / {{ (log.title or '') }}">
+                                        {{ log.process or 'N/A' }}<br><small>{{ log.title or '' }}</small>
+                                    </td>
                                     <td title="{{ log.device_id }}">{{ (log.device_id or 'N/A')[:8] }}</td>
                                     <td>{{ log.source or 'N/A' }}</td>
                                 </tr>
@@ -246,20 +250,78 @@
                 </div>
             </div>
         </div>
+
+        <div class="card shadow-sm mt-4">
+            <div class="card-header bg-light d-flex justify-content-between align-items-center">
+                <button class="btn btn-link text-decoration-none text-dark p-0" type="button" data-bs-toggle="collapse" data-bs-target="#unknown-panel" aria-expanded="false" aria-controls="unknown-panel">
+                    <h5 class="card-title mb-0">🛠️ 未归类诊断 <span class="text-muted small ms-2">仅用于补规则，不参与学习/娱乐主统计</span></h5>
+                </button>
+                <button class="btn btn-outline-secondary btn-sm" onclick="loadUnknownTop()">刷新</button>
+            </div>
+            <div id="unknown-panel" class="collapse">
+            <div class="card-body">
+                <p class="text-muted small mb-3">最近 <span id="unk-days-label">7</span> 天规则未覆盖的界面（unknown）。点「学习/娱乐」即标注该进程/标题，客户端下次拉取后按此判定。</p>
+                <div class="table-responsive">
+                    <table class="table table-sm table-hover mb-0">
+                        <thead class="table-light">
+                            <tr>
+                                <th>进程</th>
+                                <th>窗口标题</th>
+                                <th>出现次数</th>
+                                <th>标注</th>
+                            </tr>
+                        </thead>
+                        <tbody id="unk-table-body">
+                            <tr><td colspan="4" class="text-center text-muted">加载中…</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="mt-3">
+                    <h6 class="text-muted">🗂️ 已生效的覆盖规则 <a href="#" class="small" onclick="loadOverrides(event)">刷新</a></h6>
+                    <div id="override-list" class="text-muted small">点击上方刷新</div>
+                </div>
+            </div>
+            </div>
+        </div>
     </div>
 
     <script>
         let pieChart, lineChart;
 
         document.addEventListener('DOMContentLoaded', function() {
+            setDefaultDateFilters();
             initCharts();
             loadStats(periodDays());
             loadPieChart(periodDays());
             loadTrendChart();
             loadDevices();
+            loadLogsForPeriod(periodDays());
             loadFeedback();
+            loadUnknownTop();
+            loadOverrides();
+            formatExistingTimestamps();
             updateRefreshTime();
         });
+
+        function formatTimestamp(value) {
+            if (!value) return '-';
+            const raw = String(value).trim();
+            // 服务端保存的是本地 ISO 时间（无时区后缀）；浏览器按本地时区解析，
+            // 不额外加 Z，避免把已经是北京时间的值再次偏移 8 小时。
+            const normalized = raw.includes('T') ? raw : raw.replace(' ', 'T');
+            const date = new Date(normalized);
+            if (Number.isNaN(date.getTime())) return raw;
+            return date.toLocaleString('zh-CN', {
+                year: 'numeric', month: '2-digit', day: '2-digit',
+                hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false,
+            }).replace(/\//g, '-');
+        }
+
+        function formatExistingTimestamps() {
+            document.querySelectorAll('[data-timestamp]').forEach(cell => {
+                cell.textContent = formatTimestamp(cell.dataset.timestamp);
+            });
+        }
 
         async function loadFeedback() {
             try {
@@ -292,7 +354,7 @@
                     const tr = document.createElement('tr');
                     tr.innerHTML = `
                         <td>${f.id}</td>
-                        <td>${f.timestamp}</td>
+                        <td>${formatTimestamp(f.timestamp)}</td>
                         <td><span class="badge bg-info">${f.detected_activity}</span></td>
                         <td><span class="badge ${f.actual_activity === 'study' ? 'bg-success' : f.actual_activity === 'entertainment' ? 'bg-warning text-dark' : 'bg-info'}">${f.actual_activity}</span></td>
                         <td>${typeBadge}</td>
@@ -307,6 +369,97 @@
 
         function currentDevice() {
             return document.getElementById('device-select').value;
+        }
+
+        async function loadUnknownTop() {
+            try {
+                let url = '/api/unknown-top?days=7&limit=15';
+                const dev = currentDevice();
+                if (dev) url += `&device=${encodeURIComponent(dev)}`;
+                const response = await fetch(url);
+                const data = await response.json();
+                const tbody = document.getElementById('unk-table-body');
+                if (!data.samples || data.samples.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="4" class="text-center text-muted">最近无 unknown 样本，规则覆盖良好 🎉</td></tr>';
+                    document.getElementById('unk-days-label').textContent = data.top_titles?.length ? '7' : '7';
+                    return;
+                }
+                // 按 (process, title) 去重统计出现次数
+                const seen = {};
+                for (const s of data.samples) {
+                    const key = `${s.device_id || ''}|${s.process || ''}|${s.title || ''}`;
+                    if (!seen[key]) { seen[key] = { ...s, count: 0 }; }
+                    seen[key].count++;
+                }
+                tbody.innerHTML = '';
+                for (const [key, s] of Object.entries(seen)) {
+                    const tr = document.createElement('tr');
+                    const proc = s.process || '<span class="text-muted">-</span>';
+                    const title = s.title || '<span class="text-muted">-</span>';
+                    tr.innerHTML = `
+                        <td class="text-nowrap">${esc(proc)}</td>
+                        <td class="text-truncate" style="max-width:320px" title="${esc(s.title || '')}">${esc(title)}</td>
+                        <td>${s.count}</td>
+                        <td class="text-nowrap">
+                            <button class="btn btn-sm btn-success me-1 label-btn" data-activity="study">学习</button>
+                            <button class="btn btn-sm btn-warning text-dark label-btn" data-activity="entertainment">娱乐</button>
+                        </td>`;
+                    tr.querySelectorAll('.label-btn').forEach(button => {
+                        button.addEventListener('click', () => labelUnknown(
+                            s.process || '', s.title || '', button.dataset.activity, s.device_id || ''));
+                    });
+                    tbody.appendChild(tr);
+                }
+            } catch (error) {
+                console.error('Error loading unknown-top:', error);
+            }
+        }
+
+        function esc(s) {
+            return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+        }
+        async function labelUnknown(process, title, activity, sampleDevice) {
+            const dev = sampleDevice || currentDevice();
+            const payload = { process, title, activity };
+            if (dev) payload.device_id = dev;
+            try {
+                const response = await fetch('/api/label', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload),
+                });
+                const data = await response.json();
+                alert(`标注成功：${process || '(任意进程)'} / ${title || '(任意标题)'} → ${activity}\n${data.message}`);
+                loadUnknownTop();
+                loadOverrides();
+            } catch (error) {
+                console.error('标注失败:', error);
+                alert('标注失败，请检查服务端');
+            }
+        }
+
+        async function loadOverrides() {
+            try {
+                const dev = currentDevice();
+                let url = '/api/overrides';
+                if (dev) url += `?device=${encodeURIComponent(dev)}`;
+                const response = await fetch(url);
+                const rows = await response.json();
+                const box = document.getElementById('override-list');
+                if (!rows || rows.length === 0) {
+                    box.innerHTML = '暂无覆盖规则 — 在 unknown 样本上点「学习/娱乐」创建';
+                    return;
+                }
+                box.innerHTML = '';
+                rows.forEach(r => {
+                    const span = document.createElement('span');
+                    span.className = 'badge bg-light text-dark border me-2 mb-1';
+                    span.textContent = `${r.process || '(任意进程)'}${r.title ? ' / ' + r.title : ''} → ${r.activity} (×${r.hit_count})`;
+                    box.appendChild(span);
+                });
+            } catch (error) {
+                console.error('Error loading overrides:', error);
+            }
         }
 
         async function loadDevices() {
@@ -380,14 +533,6 @@
                 if (data.entertainment !== undefined) {
                     seriesData.push({ value: data.entertainment, name: '娱乐' });
                 }
-                if (Object.keys(data).some(k => !['study', 'entertainment'].includes(k))) {
-                    for (const key in data) {
-                        if (!['study', 'entertainment'].includes(key)) {
-                            seriesData.push({ value: data[key], name: key });
-                        }
-                    }
-                }
-
                 const option = {
                     tooltip: {
                         trigger: 'item'
@@ -497,13 +642,13 @@
                 const endDate = document.getElementById('filter-end').value;
                 const device = currentDevice();
 
-                let url = '/api/search?';
-                if (activity) url += `activity=${encodeURIComponent(activity)}&`;
-                if (keyword) url += `keyword=${encodeURIComponent(keyword)}&`;
-                if (startDate) url += `start_date=${encodeURIComponent(startDate)}&`;
-                if (endDate) url += `end_date=${encodeURIComponent(endDate)}`;
-                if (device) url += `device=${encodeURIComponent(device)}`;
-                url += `&limit=500`;
+                const params = new URLSearchParams({ limit: '500' });
+                if (activity) params.set('activity', activity);
+                if (keyword) params.set('keyword', keyword);
+                if (startDate) params.set('start_date', startDate);
+                if (endDate) params.set('end_date', endDate);
+                if (device) params.set('device', device);
+                const url = `/api/search?${params.toString()}`;
 
                 const response = await fetch(url);
                 const logs = await response.json();
@@ -519,9 +664,16 @@
         function resetFilter() {
             document.getElementById('filter-activity').value = '';
             document.getElementById('filter-keyword').value = '';
-            document.getElementById('filter-start').value = '';
-            document.getElementById('filter-end').value = '';
+            setDefaultDateFilters();
             location.reload();
+        }
+
+        function setDefaultDateFilters() {
+            const today = fmtDate(new Date());
+            const start = document.getElementById('filter-start');
+            const end = document.getElementById('filter-end');
+            if (start && !start.value) start.value = today;
+            if (end && !end.value) end.value = today;
         }
 
         function renderLogTable(logs) {
@@ -542,7 +694,7 @@
 
                 tr.innerHTML = `
                     <td>${log.id}</td>
-                    <td>${log.timestamp}</td>
+                    <td>${formatTimestamp(log.timestamp)}</td>
                     <td>
                         <span class="badge ${log.activity === 'study' ? 'bg-success' : log.activity === 'entertainment' ? 'bg-warning text-dark' : log.activity === 'unknown' ? 'bg-danger' : 'bg-info'}">
                             ${log.activity}
@@ -552,6 +704,7 @@
                     <td>${conf}</td>
                     <td>${log.decision_source || 'N/A'}</td>
                     <td>${log.reason || 'N/A'}</td>
+                    <td title="${esc([log.process, log.title].filter(Boolean).join(' / '))}">${esc([log.process, log.title].filter(Boolean).join(' · ') || 'N/A')}</td>
                     <td title="${log.device_id || ''}">${dev}</td>
                     <td>${log.source || 'N/A'}</td>
                 `;
@@ -618,7 +771,8 @@
             const days = periodDays();
             const ctxKey = logContextKey(days);
             if (ctxKey !== currentLogKey) {
-                // 用户中途切换了时段/设备，交给 applyPeriod 走全量重拉
+                // 首次请求失败或上下文刚建立时，先全量拉取，避免刷新永远没有数据。
+                loadLogsForPeriod(days);
                 return;
             }
             try {
@@ -654,12 +808,13 @@
             const dev = log.device_id ? log.device_id.slice(0, 8) : 'N/A';
             tr.innerHTML = `
                 <td>${log.id}</td>
-                <td>${log.timestamp}</td>
+                <td>${formatTimestamp(log.timestamp)}</td>
                 <td><span class="badge ${log.activity === 'study' ? 'bg-success' : log.activity === 'entertainment' ? 'bg-warning text-dark' : log.activity === 'unknown' ? 'bg-danger' : 'bg-info'}">${log.activity}</span></td>
                 <td>${log.message}</td>
                 <td>${conf}</td>
                 <td>${log.decision_source || 'N/A'}</td>
                 <td>${log.reason || 'N/A'}</td>
+                <td title="${esc([log.process, log.title].filter(Boolean).join(' / '))}">${esc([log.process, log.title].filter(Boolean).join(' · ') || 'N/A')}</td>
                 <td title="${log.device_id || ''}">${dev}</td>
                 <td>${log.source || 'N/A'}</td>
             `;
