@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, DateTime, Text, Float
+from sqlalchemy import Column, Integer, String, DateTime, Text, Float, LargeBinary, Index
 from .database import Base
 from datetime import datetime
 
@@ -68,6 +68,48 @@ class ImageAnalysis(Base):
     window_title = Column(String, nullable=True)
     process = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Screenshot(Base):
+    """按固定频率采样的前台窗口截图。
+
+    JPEG 二进制直接保存在 PostgreSQL BYTEA（SQLAlchemy LargeBinary），避免 Base64
+    造成约三分之一额外存储开销。SQLite 开发环境同样兼容。
+    """
+    __tablename__ = "screenshots"
+
+    id = Column(Integer, primary_key=True, index=True)
+    device_id = Column(String(128), nullable=False, index=True)
+    image_bytes = Column(LargeBinary, nullable=False)
+    image_hash = Column(String(64), nullable=False, index=True)
+    mime_type = Column(String(32), nullable=False, default="image/jpeg")
+    width = Column(Integer, nullable=True)
+    height = Column(Integer, nullable=True)
+    activity = Column(String(32), nullable=True)
+    confidence = Column(Float, nullable=True)
+    process = Column(String(128), nullable=True)
+    window_title = Column(String(512), nullable=True)
+    vision_label = Column(String(32), nullable=True)  # 后续 VLM / 人工标注的数据沉淀
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+    __table_args__ = (
+        Index("ix_screenshots_device_created", "device_id", "created_at"),
+    )
+
+
+class ClassificationRule(Base):
+    """可由家长看板维护的全局分类规则。"""
+    __tablename__ = "classification_rules"
+
+    id = Column(Integer, primary_key=True, index=True)
+    activity = Column(String(32), nullable=False)  # study / entertainment / idle
+    signal_type = Column(String(32), nullable=False)  # process / title / ocr / domain
+    match_type = Column(String(16), nullable=False, default="contains")  # exact / contains / domain
+    pattern = Column(String(512), nullable=False)
+    priority = Column(Integer, nullable=False, default=100)
+    enabled = Column(Integer, nullable=False, default=1)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class ClassificationOverride(Base):

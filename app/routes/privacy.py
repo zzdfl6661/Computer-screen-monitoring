@@ -31,6 +31,7 @@ def get_privacy_policy(db: Session = Depends(get_db)):
         "data_collection": {
             "description": "系统收集的用户数据类型",
             "activity_logs": "电脑使用活动日志，包括窗口标题、活动类型判断结果",
+            "screenshots": "每分钟采集的前台窗口压缩截图，用于家长看板回溯与后续人工标注；默认保留 7 天",
             "feedback": "用户反馈数据，用于优化分类算法",
             "device_info": "设备标识，用于区分不同设备"
         },
@@ -38,7 +39,7 @@ def get_privacy_policy(db: Session = Depends(get_db)):
             "description": "数据存储方式",
             "encryption": "客户端敏感数据（device_token、access_token）使用 Fernet 加密存储",
             "https": "服务端数据传输使用 HTTPS 加密",
-            "local_processing": "截图仅在本地处理，不传输到服务端"
+            "screenshot_storage": "截图以压缩 JPEG 二进制保存到 PostgreSQL，不以 Base64 持久化；家长看板登录后才可查看"
         },
         "data_retention": {
             "description": "数据保留策略",

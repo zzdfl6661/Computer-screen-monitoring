@@ -4,6 +4,7 @@ from .classify import multimodal_fusion_analysis
 from .report import send_to_server
 from .ui import show_config_window, show_popup
 from .feedback import send_feedback
+from .screenshots import ScreenshotScheduler, update_capture_context
 
 __all__ = [
     'ConfigManager',
@@ -12,5 +13,5 @@ __all__ = [
     'send_to_server',
     'show_config_window',
     'show_popup',
-    'send_feedback'
+    'send_feedback', 'ScreenshotScheduler', 'update_capture_context'
 ]

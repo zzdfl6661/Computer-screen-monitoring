@@ -7,6 +7,8 @@ from client_package import (
     multimodal_fusion_analysis,
     send_to_server,
     show_popup,
+    ScreenshotScheduler,
+    update_capture_context,
 )
 from database import DatabaseManager
 from logger import setup_logger
@@ -26,6 +28,8 @@ def main():
         return
 
     result_queue = deque(maxlen=5)
+    screenshot_scheduler = ScreenshotScheduler(interval_seconds=60)
+    screenshot_scheduler.start()
 
     logger.info("使用配置文件启动...")
 
@@ -41,6 +45,8 @@ def main():
             logger.info(f"活动分析结果: {activity_type} (conf={meta['confidence']}, "
                         f"source={meta['decision_source']}, reason={meta['reason']}, "
                         f"process={meta.get('process')!r}, title={meta.get('title')!r})")
+            update_capture_context(activity=activity_type, confidence=meta['confidence'],
+                                   process=meta.get('process'), window_title=meta.get('title'))
 
             result_queue.append(activity_type)
 
@@ -77,6 +83,7 @@ def main():
         logger.error(f"发生错误: {e}", exc_info=True)
         local_db.close()
     finally:
+        screenshot_scheduler.stop()
         instance.release()
 
 

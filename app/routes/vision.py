@@ -71,7 +71,7 @@ def analyze_image(
 
     ocr_text = ocr_bytes(raw)
     # 多信号融合：process + window_title + OCR 文本（Docker/IDE/终端标题不再被丢弃）
-    activity, confidence, detail = classify_fused(ocr_text, request.window_title, request.process)
+    activity, confidence, detail = classify_fused(ocr_text, request.window_title, request.process, db=db)
 
     row = ImageAnalysis(
         device_id=device.device_token,

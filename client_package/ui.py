@@ -4,6 +4,7 @@ import ctypes
 import tkinter as tk
 from tkinter import messagebox, simpledialog, ttk
 import logging
+import threading
 
 from .config import ConfigManager
 from logger import setup_logger
@@ -68,126 +69,89 @@ def show_config_window():
     root.mainloop()
 
 
+_popup_lock = threading.Lock()
+_popup_showing = False
+
+
+def _show_animated_popup(message, activity_type):
+    """Tk 的 after 帧循环实现进场、呼吸和退场，独立线程不堵塞监控循环。"""
+    global _popup_showing
+    try:
+        _prepare_tk_dpi()
+        root = tk.Tk()
+        root.title("学习小提醒")
+        root.overrideredirect(True); root.resizable(False, False)
+        root.configure(bg="#fff7ed"); root.attributes("-topmost", True); root.attributes("-alpha", 0.0)
+        card = tk.Frame(root, bg="#fff7ed", highlightbackground="#fdba74", highlightthickness=2)
+        card.pack(fill="both", expand=True)
+        tk.Label(card, text="🌟", bg="#fff7ed", fg="#fb923c", font=("Segoe UI Emoji", 32)).pack(pady=(14, 0))
+        tk.Label(card, text="学习小提醒", bg="#fff7ed", fg="#9a3412",
+                 font=("Microsoft YaHei UI", 16, "bold")).pack(pady=(0, 4))
+        subtitle = "休息一下，再继续加油吧～" if activity_type == "entertainment" else "慢慢来，你做得很好～"
+        tk.Label(card, text=subtitle, bg="#fff7ed", fg="#c2410c", font=("Microsoft YaHei UI", 10)).pack()
+        tk.Label(card, text=message, bg="#fff7ed", fg="#431407", font=("Microsoft YaHei UI", 13),
+                 wraplength=420, justify="center").pack(padx=28, pady=(9, 10))
+        countdown = tk.Label(card, bg="#fed7aa", fg="#9a3412", font=("Microsoft YaHei UI", 9))
+        countdown.pack(fill="x", padx=28)
+        button = tk.Button(card, text="知道啦 ✨", bg="#fb923c", fg="white", activebackground="#f97316",
+                           relief="flat", bd=0, cursor="hand2", font=("Microsoft YaHei UI", 11, "bold"),
+                           padx=18, pady=7)
+        button.pack(pady=14)
+        root.update_idletasks()
+        width, height = max(490, root.winfo_reqwidth()), max(245, root.winfo_reqheight())
+        x, y = root.winfo_pointerx() - width // 2, root.winfo_pointery() - height // 2
+        base_y = max(0, y); x = max(0, x)
+        started, closing = __import__('time').monotonic(), [False]
+
+        def finish():
+            if closing[0]: return
+            closing[0] = True
+            def out(frame=0):
+                alpha = max(0.0, 1 - frame / 22)
+                try:
+                    root.attributes("-alpha", alpha)
+                    root.geometry(f"{width}x{height}+{x}+{base_y - int(frame * 2)}")
+                    if frame < 22: root.after(60, lambda: out(frame + 1))
+                    else: root.destroy()
+                except tk.TclError: pass
+            out()
+
+        def animate(frame=0):
+            if closing[0]: return
+            elapsed = __import__('time').monotonic() - started
+            if frame < 14:
+                # 弹性滑入：由下方 32px 轻轻弹进来。
+                progress = frame / 13
+                root.attributes("-alpha", min(1.0, progress * 1.25))
+                root.geometry(f"{width}x{height}+{x}+{base_y + int((1-progress)**2 * 32)}")
+            else:
+                import math
+                root.geometry(f"{width}x{height}+{x}+{base_y + int(math.sin(elapsed * 3) * 3)}")
+            left = max(0, int(12 - elapsed))
+            countdown.config(text=f"  {left} 秒后会轻轻消失" + " ·" * (1 + frame % 3))
+            if elapsed >= 12: finish(); return
+            root.after(50, lambda: animate(frame + 1))
+
+        button.config(command=finish)
+        root.bind("<Return>", lambda _e: finish()); root.bind("<Escape>", lambda _e: finish())
+        root.geometry(f"{width}x{height}+{x}+{base_y + 32}"); root.lift(); root.focus_force()
+        root.after(0, animate); root.mainloop()
+    except Exception as exc:
+        logger.error(f"动态弹窗失败: {exc}")
+    finally:
+        with _popup_lock: _popup_showing = False
+
+
 def show_popup(message, activity_type=None):
-    """弹出学习提醒弹窗。
-
-    设计原则：青少年/小孩不会给出准确的"误报/漏报"反馈（甚至会报复性乱选），
-    因此弹窗只保留"确定"按钮——确认看到了就行，不再让孩子做主观标注。
-    反馈数据仍然走 `feedback` 表（POST 接口保留），供家长端或程序化使用。
-    """
-    is_windows = platform.system() == 'Windows'
-    feedback_result = {'type': None, 'activity_type': activity_type}
-
-    if is_windows:
-        try:
-            _prepare_tk_dpi()
-            root = tk.Tk()
-            root.title("学习提醒")
-            root.overrideredirect(True)
-            root.resizable(False, False)
-            root.configure(bg="#0f172a")
-            root.attributes('-topmost', True)
-
-            # 自绘卡片：比默认 Tk messagebox 更清晰，也不受系统主题的低对比度影响。
-            card = tk.Frame(
-                root,
-                bg="#0f172a",
-                highlightbackground="#334155",
-                highlightcolor="#334155",
-                highlightthickness=1,
-                bd=0,
-            )
-            card.pack(fill="both", expand=True)
-
-            header = tk.Frame(card, bg="#1e293b", height=68)
-            header.pack(fill="x")
-            header.pack_propagate(False)
-
-            title_font = ("Microsoft YaHei UI", 16, "bold")
-            body_font = ("Microsoft YaHei UI", 15)
-            small_font = ("Microsoft YaHei UI", 10)
-
-            tk.Label(
-                header,
-                text="⚠",
-                bg="#1e293b",
-                fg="#fbbf24",
-                font=("Segoe UI Symbol", 25, "bold"),
-                width=3,
-            ).pack(side="left", padx=(18, 0))
-            tk.Label(
-                header,
-                text="学习提醒",
-                bg="#1e293b",
-                fg="#f8fafc",
-                font=title_font,
-                anchor="w",
-            ).pack(side="left", padx=4)
-
-            body = tk.Frame(card, bg="#0f172a")
-            body.pack(fill="both", expand=True, padx=26, pady=(20, 8))
-            subtitle = "检测到连续娱乐活动" if activity_type == "entertainment" else "请确认当前状态"
-            tk.Label(
-                body,
-                text=subtitle,
-                bg="#0f172a",
-                fg="#94a3b8",
-                font=small_font,
-                anchor="w",
-            ).pack(fill="x")
-            tk.Label(
-                body,
-                text=message,
-                bg="#0f172a",
-                fg="#f8fafc",
-                font=body_font,
-                justify="left",
-                anchor="w",
-                wraplength=455,
-            ).pack(fill="x", pady=(7, 0))
-
-            footer = tk.Frame(card, bg="#0f172a")
-            footer.pack(fill="x", padx=26, pady=(4, 20))
-
-            def on_ok():
-                root.destroy()
-
-            button = tk.Button(
-                footer,
-                text="知道了",
-                command=on_ok,
-                bg="#2563eb",
-                fg="#ffffff",
-                activebackground="#1d4ed8",
-                activeforeground="#ffffff",
-                disabledforeground="#ffffff",
-                relief="flat",
-                bd=0,
-                cursor="hand2",
-                font=("Microsoft YaHei UI", 12, "bold"),
-                padx=22,
-                pady=8,
-            )
-            button.pack(side="right")
-            root.bind("<Return>", lambda _event: on_ok())
-            root.bind("<Escape>", lambda _event: on_ok())
-
-            # 先计算真实尺寸，再在鼠标所在屏幕居中，避免多显示器上弹到错误位置。
-            root.update_idletasks()
-            width = max(520, root.winfo_reqwidth())
-            height = max(245, root.winfo_reqheight())
-            px, py = root.winfo_pointerx(), root.winfo_pointery()
-            root.geometry(f"{width}x{height}+{max(0, px - width // 2)}+{max(0, py - height // 2)}")
-            root.lift()
-            root.focus_force()
-            # 提醒不应永久阻塞监控循环；用户未操作时 15 秒自动收起。
-            root.after(15000, lambda: root.winfo_exists() and root.destroy())
-
-            root.mainloop()
-        except Exception as e:
-            logger.error(f"弹窗失败: {e}")
-            logger.info(f"提示信息: {message}")
-    else:
+    """显示单例、非阻塞的可爱提醒；重复触发时保持当前提醒，避免窗口轰炸。"""
+    global _popup_showing
+    if platform.system() != "Windows":
         logger.info(f"提示信息: {message}")
-
-    return feedback_result
+        return {"type": None, "activity_type": activity_type}
+    with _popup_lock:
+        if _popup_showing:
+            return {"type": None, "activity_type": activity_type, "status": "already_showing"}
+        _popup_showing = True
+    threading.Thread(target=_show_animated_popup, args=(message, activity_type), daemon=True,
+                     name="friendly-reminder").start()
+    return {"type": None, "activity_type": activity_type}

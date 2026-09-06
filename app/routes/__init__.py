@@ -7,6 +7,8 @@ from .feedback import router as feedback_router
 from .privacy import router as privacy_router
 from .vision import router as vision_router
 from .label import router as label_router
+from .screenshots import router as screenshots_router
+from .rules import router as rules_router
 
 activity = activity_router
 stats = stats_router
@@ -17,3 +19,5 @@ feedback = feedback_router
 privacy = privacy_router
 vision = vision_router
 label = label_router
+screenshots = screenshots_router
+rules = rules_router

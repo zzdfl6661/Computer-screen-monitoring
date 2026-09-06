@@ -611,6 +611,21 @@ def get_active_window_title():
         return ""
 
 
+def _browser_display_title(url, raw_title):
+    """浏览器日志只显示当前标签页的 URL；读不到 URL 才保留清理后的标题。"""
+    if url:
+        try:
+            from urllib.parse import urlsplit
+            parsed = urlsplit(url)
+            return (parsed.netloc + (parsed.path or "/"))[:512]
+        except Exception:
+            return url[:512]
+    # Edge 有时将其它标签页数量拼进窗口标题，不能把它当成当前页面内容。
+    cleaned = re.sub(r"\s*和另外\s*\d+\s*个页面.*?(?:-|$)", "", raw_title or "", flags=re.I)
+    cleaned = re.sub(r"\s*-\s*Microsoft Edge\s*$", "", cleaned, flags=re.I)
+    return cleaned.strip()[:512]
+
+
 # 视觉兜底节流：即使一直“不确定”，截图上传间隔也至少为 vision_min_interval 秒
 # （避免无信号/锁屏等高频场景每 5 秒打一次服务端）
 _VISION_MIN_INTERVAL = float(_cfg('vision_min_interval', 30))
@@ -638,16 +653,11 @@ def multimodal_fusion_analysis(tesseract_available=False, return_meta=False):
         signals.append({'category': pcat, 'weight': WEIGHTS['process'], 'confidence': pconf})
     breakdown['process'] = (pcat, pconf, pdetail)
 
-    title = get_active_window_title()
-    tcat, tconf, site, tdetail = analyze_title(title)
-    if tconf > 0:
-        signals.append({'category': tcat, 'weight': WEIGHTS['title'], 'confidence': tconf})
-    breakdown['title'] = (tcat, tconf, site, tdetail)
-
     # 浏览器地址栏 URL 信号（可选，best-effort）：前台是浏览器时尝试读取。
     # Chromium 在地址栏未聚焦时通常不暴露真实 URL（安全限制），读不到则跳过，
     # 由标题/OCR 兜底。URL 仅在标题无定论（no_signal / 两栖站平票）时介入，
     # 用更具体的路径证据打破平局——绝不与已定论的标题信号叠加（避免双重计入）。
+    raw_title = get_active_window_title()
     url = None
     is_browser = fg and any(h in fg for h in BROWSER_HINTS)
     if is_browser:
@@ -656,6 +666,12 @@ def multimodal_fusion_analysis(tesseract_available=False, return_meta=False):
             url = get_browser_url()
         except Exception as e:
             logger.debug(f"浏览器 URL 信号不可用: {e}")
+    title = _browser_display_title(url, raw_title) if is_browser else raw_title
+
+    tcat, tconf, site, tdetail = analyze_title(title)
+    if tconf > 0:
+        signals.append({'category': tcat, 'weight': WEIGHTS['title'], 'confidence': tconf})
+    breakdown['title'] = (tcat, tconf, site, tdetail)
     ucat, uconf, udetail = ('idle', 0.0, 'no_url')
     if url and tconf == 0:  # 仅当标题无定论时，URL 才作为补充证据
         ucat, uconf, udetail = analyze_url(url)
@@ -697,6 +713,18 @@ def multimodal_fusion_analysis(tesseract_available=False, return_meta=False):
         activity, dconf = override[0], override[1]
         reason, uncertain = 'parent_override', False
         logger.info(f"家长覆盖规则生效: {fg}/{title} -> {activity} (conf {dconf:.2f})")
+    # 数据库全局规则位于家长覆盖规则之后、视觉兜底之前；断网自动回退内置规则。
+    if not override:
+        try:
+            from .rule_cache import match_rule
+            domain = (url or '').split('/')[2].split(':')[0] if url and '://' in url else ''
+            remote_rule = match_rule(process=fg, title=title, domain=domain)
+            if remote_rule:
+                activity, dconf = remote_rule['activity'], 0.98
+                reason, uncertain = 'database_rule', False
+                logger.info(f"数据库规则生效: {remote_rule['signal_type']}={remote_rule['pattern']} -> {activity}")
+        except Exception as e:
+            logger.debug(f"数据库规则匹配失败: {e}")
     breakdown['override'] = override
 
     breakdown['fusion'] = (activity, dconf, scores, uncertain)

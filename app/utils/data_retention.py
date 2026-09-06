@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
-from app.models import ActivityLog, Feedback, ImageAnalysis, DataRetentionPolicy
+from app.models import ActivityLog, Feedback, ImageAnalysis, DataRetentionPolicy, Screenshot
 from logger import setup_logger
 import threading
 import time
@@ -8,6 +8,7 @@ import time
 logger = setup_logger('data_retention')
 
 DEFAULT_RETENTION_DAYS = 30
+SCREENSHOT_RETENTION_DAYS = 7
 CLEANUP_INTERVAL_HOURS = 24
 
 def get_retention_days(db: Session) -> int:
@@ -50,12 +51,17 @@ def cleanup_old_data(db: Session, retention_days: int = None):
     image_deleted = db.query(ImageAnalysis).filter(
         ImageAnalysis.created_at < cutoff_date
     ).delete(synchronize_session=False)
+    # 固定频率截图数量更大，采用独立的 7 天默认保留期。
+    screenshot_cutoff = datetime.utcnow() - timedelta(days=SCREENSHOT_RETENTION_DAYS)
+    screenshot_deleted = db.query(Screenshot).filter(
+        Screenshot.created_at < screenshot_cutoff
+    ).delete(synchronize_session=False)
     
     db.commit()
     
-    if activity_deleted > 0 or feedback_deleted > 0 or image_deleted > 0:
+    if activity_deleted > 0 or feedback_deleted > 0 or image_deleted > 0 or screenshot_deleted > 0:
         logger.info(f"数据清理完成: 活动日志 {activity_deleted} 条, 反馈 {feedback_deleted} 条, "
-                    f"视觉分析 {image_deleted} 条, 保留期限 {retention_days} 天")
+                    f"视觉分析 {image_deleted} 条, 截图 {screenshot_deleted} 条")
     else:
         logger.debug(f"数据清理: 无需删除, 保留期限 {retention_days} 天")
     
@@ -63,6 +69,7 @@ def cleanup_old_data(db: Session, retention_days: int = None):
         'activity_logs_deleted': activity_deleted,
         'feedback_deleted': feedback_deleted,
         'image_analyses_deleted': image_deleted,
+        'screenshots_deleted': screenshot_deleted,
         'retention_days': retention_days
     }
 

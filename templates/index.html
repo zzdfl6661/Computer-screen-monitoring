@@ -21,6 +21,15 @@
             height: 350px;
             width: 100%;
         }
+        .screenshot-tile { cursor: pointer; animation: screenshot-in .38s ease both; }
+        .screenshot-tile img { height: 175px; width: 100%; object-fit: cover; transition: transform .22s ease, filter .22s ease; }
+        .screenshot-tile:hover img { transform: scale(1.045); filter: saturate(1.12); }
+        .screenshot-tile:hover { box-shadow: 0 .7rem 1.5rem rgba(15,23,42,.18); }
+        .dashboard-action { min-width: 250px; padding: .7rem 1.15rem; font-size: 1.05rem; font-weight: 600; }
+        .timeline-dialog { max-width: min(1600px, 94vw); }
+        @keyframes screenshot-in { from { opacity: 0; transform: translateY(12px) scale(.97); } to { opacity: 1; transform: none; } }
+        .modal.fade .modal-dialog { transform: scale(.92); transition: transform .22s ease-out; }
+        .modal.show .modal-dialog { transform: scale(1); }
     </style>
 </head>
 <body>
@@ -147,7 +156,14 @@
             </div>
         </div>
 
-        <div class="card shadow-sm">
+        <div class="card shadow-sm mb-3" id="log-tools">
+            <div class="card-body py-3 d-flex gap-3 align-items-center">
+                <span class="text-muted fw-semibold me-2">快捷查看：</span>
+                <button class="btn btn-primary dashboard-action" onclick="openScreenshotTimeline()">🖼️ 打开截图时间轴</button>
+            </div>
+        </div>
+
+        <div class="card shadow-sm" id="activity-log-card">
             <div class="card-header bg-light d-flex justify-content-between align-items-center">
                 <h5 class="card-title mb-0">📝 活动日志 <span class="badge bg-secondary ms-2" id="live-tag" title="每 10 秒自动刷新">● 自动刷新</span></h5>
                 <div class="d-flex align-items-center">
@@ -167,7 +183,7 @@
                                 <th>置信度</th>
                                 <th>判定依据</th>
                                 <th>原因</th>
-                                <th>前台窗口</th>
+                                <th>当前网址 / 窗口</th>
                                 <th>设备</th>
                                 <th>来源</th>
                             </tr>
@@ -199,59 +215,7 @@
             </div>
         </div>
 
-        <div class="card shadow-sm mt-4">
-            <div class="card-header bg-light d-flex justify-content-between align-items-center">
-                <h5 class="card-title mb-0">🔎 反馈核验（误报/漏报）</h5>
-                <button onclick="loadFeedback()" class="btn btn-sm btn-outline-primary">🔄 刷新反馈</button>
-            </div>
-            <div class="card-body">
-                <div class="row g-3 mb-3">
-                    <div class="col-md-3">
-                        <div class="border rounded p-3 text-center">
-                            <div class="text-muted small">反馈总数</div>
-                            <h4 class="mb-0" id="fb-total">0</h4>
-                        </div>
-                    </div>
-                    <div class="col-md-3">
-                        <div class="border rounded p-3 text-center">
-                            <div class="text-muted small">误报次数</div>
-                            <h4 class="mb-0 text-warning" id="fb-fp">0</h4>
-                        </div>
-                    </div>
-                    <div class="col-md-3">
-                        <div class="border rounded p-3 text-center">
-                            <div class="text-muted small">漏报次数</div>
-                            <h4 class="mb-0 text-danger" id="fb-fn">0</h4>
-                        </div>
-                    </div>
-                    <div class="col-md-3">
-                        <div class="border rounded p-3 text-center">
-                            <div class="text-muted small">误报率 / 漏报率</div>
-                            <h4 class="mb-0" id="fb-rate">- / -</h4>
-                        </div>
-                    </div>
-                </div>
-                <div class="table-responsive">
-                    <table class="table table-sm table-hover mb-0">
-                        <thead class="table-light">
-                            <tr>
-                                <th>ID</th>
-                                <th>时间戳</th>
-                                <th>系统判定</th>
-                                <th>实际活动</th>
-                                <th>反馈类型</th>
-                                <th>设备</th>
-                            </tr>
-                        </thead>
-                        <tbody id="fb-table-body">
-                            <tr><td colspan="6" class="text-center text-muted">暂无反馈数据</td></tr>
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        </div>
-
-        <div class="card shadow-sm mt-4">
+        <div class="card shadow-sm mt-4" id="unknown-diagnostic-card">
             <div class="card-header bg-light d-flex justify-content-between align-items-center">
                 <button class="btn btn-link text-decoration-none text-dark p-0" type="button" data-bs-toggle="collapse" data-bs-target="#unknown-panel" aria-expanded="false" aria-controls="unknown-panel">
                     <h5 class="card-title mb-0">🛠️ 未归类诊断 <span class="text-muted small ms-2">仅用于补规则，不参与学习/娱乐主统计</span></h5>
@@ -285,6 +249,9 @@
         </div>
     </div>
 
+    <div class="modal fade" id="timeline-modal" tabindex="-1" aria-labelledby="timeline-title" aria-hidden="true"><div class="modal-dialog modal-xl modal-dialog-scrollable timeline-dialog"><div class="modal-content"><div class="modal-header"><div><h4 class="modal-title" id="timeline-title">🖼️ 截图时间轴</h4><div class="text-muted small">默认保存 7 天，点击缩略图查看详情和标注。</div></div><div class="d-flex gap-2 align-items-center"><button class="btn btn-outline-primary" onclick="loadScreenshots()">🔄 刷新</button><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div></div><div class="modal-body"><div id="timeline-grid" class="row row-cols-1 row-cols-sm-2 row-cols-lg-3 row-cols-xl-4 g-4"><div class="text-muted">正在加载截图…</div></div></div></div></div></div>
+    <div class="modal fade" id="screenshot-modal" tabindex="-1"><div class="modal-dialog modal-xl modal-dialog-centered"><div class="modal-content"><div class="modal-header"><h5 class="modal-title">截图详情</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div><div class="modal-body text-center"><img id="screenshot-large" class="img-fluid rounded" style="max-height:70vh" alt="截图"><div id="screenshot-meta" class="small text-muted mt-3 text-start"></div><div class="mt-2"><button class="btn btn-sm btn-outline-success" onclick="labelScreenshot('study')">标为学习</button> <button class="btn btn-sm btn-outline-warning" onclick="labelScreenshot('entertainment')">标为娱乐</button></div></div></div></div></div>
+
     <script>
         let pieChart, lineChart;
 
@@ -296,7 +263,6 @@
             loadTrendChart();
             loadDevices();
             loadLogsForPeriod(periodDays());
-            loadFeedback();
             loadUnknownTop();
             loadOverrides();
             formatExistingTimestamps();
@@ -321,50 +287,6 @@
             document.querySelectorAll('[data-timestamp]').forEach(cell => {
                 cell.textContent = formatTimestamp(cell.dataset.timestamp);
             });
-        }
-
-        async function loadFeedback() {
-            try {
-                let url = '/api/feedback';
-                const dev = currentDevice();
-                if (dev) url += `?device=${encodeURIComponent(dev)}`;
-                const response = await fetch(url);
-                const data = await response.json();
-
-                document.getElementById('fb-total').textContent = data.total ?? 0;
-                document.getElementById('fb-fp').textContent = data.false_positive_count ?? 0;
-                document.getElementById('fb-fn').textContent = data.false_negative_count ?? 0;
-                const fpRate = ((data.false_positive_rate ?? 0) * 100).toFixed(1);
-                const fnRate = ((data.false_negative_rate ?? 0) * 100).toFixed(1);
-                document.getElementById('fb-rate').textContent = `${fpRate}% / ${fnRate}%`;
-
-                const tbody = document.getElementById('fb-table-body');
-                tbody.innerHTML = '';
-                const items = data.items || [];
-                if (!items.length) {
-                    tbody.innerHTML = '<tr><td colspan="6" class="text-center text-muted">暂无反馈数据</td></tr>';
-                    return;
-                }
-                items.forEach(f => {
-                    const typeBadge = f.feedback_type === 'false_positive'
-                        ? '<span class="badge bg-warning text-dark">误报</span>'
-                        : f.feedback_type === 'false_negative'
-                            ? '<span class="badge bg-danger">漏报</span>'
-                            : `<span class="badge bg-secondary">${f.feedback_type}</span>`;
-                    const tr = document.createElement('tr');
-                    tr.innerHTML = `
-                        <td>${f.id}</td>
-                        <td>${formatTimestamp(f.timestamp)}</td>
-                        <td><span class="badge bg-info">${f.detected_activity}</span></td>
-                        <td><span class="badge ${f.actual_activity === 'study' ? 'bg-success' : f.actual_activity === 'entertainment' ? 'bg-warning text-dark' : 'bg-info'}">${f.actual_activity}</span></td>
-                        <td>${typeBadge}</td>
-                        <td title="${f.device_id || ''}">${(f.device_id || 'N/A').slice(0, 8)}</td>
-                    `;
-                    tbody.appendChild(tr);
-                });
-            } catch (error) {
-                console.error('Error loading feedback:', error);
-            }
         }
 
         function currentDevice() {
@@ -482,7 +404,6 @@
             loadStats(periodDays());
             loadPieChart(periodDays());
             loadLogsForPeriod(periodDays());
-            loadFeedback();
         }
 
         function periodDays() {
@@ -716,7 +637,6 @@
             loadStats(periodDays());
             loadPieChart(periodDays());
             loadTrendChart();
-            loadFeedback();
             fetchNewLogs();        // 增量拉取：仅在当前时段/设备上下文未变时追加新行
             updateRefreshTime();
         }
@@ -826,7 +746,27 @@
             if (el) el.textContent = new Date().toLocaleTimeString('zh-CN', { hour12: false });
         }
 
-        setInterval(refreshData, 10000);  // 10 秒统一刷新：统计/饼图/趋势/反馈/日志增量
+        let screenshotModal, timelineModal, selectedScreenshot = null;
+        async function loadScreenshots() {
+            try {
+                const dev = currentDevice(); let url = '/api/screenshots?days=7&limit=60';
+                if (dev) url += `&device=${encodeURIComponent(dev)}`;
+                const data = await (await fetch(url)).json(); const grid = document.getElementById('timeline-grid'); grid.innerHTML = '';
+                if (!data.items?.length) { grid.innerHTML = '<div class="text-muted small">最近 7 天暂无截图。</div>'; return; }
+                data.items.forEach((item, i) => { const col = document.createElement('div'); col.className = 'col screenshot-tile'; col.style.animationDelay = `${Math.min(i, 10) * 35}ms`;
+                    col.innerHTML = `<div class="card h-100 overflow-hidden"><img src="${item.image_url}" alt="截图缩略图"><div class="card-body p-2"><div class="small text-truncate">${esc(item.process || '未知进程')}</div><div class="text-muted small">${new Date(item.created_at).toLocaleString('zh-CN', {hour12:false})}</div></div></div>`;
+                    col.onclick = () => openScreenshot(item); grid.appendChild(col); });
+            } catch (e) { console.error('截图加载失败', e); }
+        }
+        function openScreenshotTimeline() { loadScreenshots(); timelineModal.show(); }
+        function openScreenshot(item) { selectedScreenshot = item; document.getElementById('screenshot-large').src = item.image_url; document.getElementById('screenshot-meta').textContent = `${item.process || '未知进程'} · ${item.window_title || '无窗口标题'} · ${item.activity || '未分类'} · ${new Date(item.created_at).toLocaleString('zh-CN', {hour12:false})}`; screenshotModal.show(); }
+        async function labelScreenshot(label) { if (!selectedScreenshot) return; await fetch(`/api/screenshots/${selectedScreenshot.id}/vision-label`, {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({vision_label:label})}); selectedScreenshot.vision_label = label; loadScreenshots(); }
+        document.addEventListener('DOMContentLoaded', () => {
+            screenshotModal = new bootstrap.Modal(document.getElementById('screenshot-modal'));
+            timelineModal = new bootstrap.Modal(document.getElementById('timeline-modal'));
+        });
+
+        setInterval(refreshData, 10000);  // 10 秒统一刷新：统计、图表与日志增量
     </script>
 </body>
 </html>

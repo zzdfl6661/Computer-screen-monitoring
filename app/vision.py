@@ -108,6 +108,8 @@ STUDY_KEYWORDS = [
 ]
 
 AMBIGUOUS_SITE_TOKENS = set(SITE_REPUTATION.get("ambiguous", []))
+# 这些词常出现在本系统自己的看板、提示和导航中，单独出现不是内容分类证据。
+GENERIC_OCR_UI_TOKENS = {"学习", "娱乐", "活动", "状态", "监控", "提醒", "继续"}
 
 # ---- 生产力工具与开发终端规则（服务端融合用）----
 
@@ -190,8 +192,9 @@ def classify_text(text: str):
     site_cat, site_token = match_site(low)
 
     ent_hits = [k for k in ENTERTAINMENT_KEYWORDS
-                if match_token(low, k) and k not in AMBIGUOUS_SITE_TOKENS]
-    study_hits = [k for k in STUDY_KEYWORDS if match_token(low, k)]
+                if match_token(low, k) and k not in AMBIGUOUS_SITE_TOKENS and k not in GENERIC_OCR_UI_TOKENS]
+    study_hits = [k for k in STUDY_KEYWORDS
+                  if match_token(low, k) and k not in GENERIC_OCR_UI_TOKENS]
 
     study_score = 0.0
     ent_score = 0.0
@@ -230,7 +233,7 @@ def classify_text(text: str):
     return (cat, round(conf, 3), f"site={site_cat}")
 
 
-def classify_fused(ocr_text: str, window_title: str = None, process: str = None):
+def classify_fused(ocr_text: str, window_title: str = None, process: str = None, db=None):
     """融合 前台进程 + 窗口标题 + OCR 文本 三个证据判级。
 
     返回 (category, confidence, detail)。规则优先级：
@@ -242,6 +245,16 @@ def classify_fused(ocr_text: str, window_title: str = None, process: str = None)
     三信号按 0.45/0.30/0.25 加权，归一化后取最大类；赢家分 < 0.40 或两可差距 < 0.05
     或总证据为 0 → unknown。
     """
+    # 数据库规则优先于静态兼容规则：管理台调整后无需改代码。
+    if db is not None:
+        try:
+            from .rule_engine import match_rule
+            matched = match_rule(db, process=process, title=window_title, ocr_text=ocr_text)
+            if matched:
+                return (matched[0], 0.98, f"db_rule:priority={matched[1]}")
+        except Exception as exc:
+            logger.warning("数据库规则匹配失败，回退内置规则: %s", exc)
+
     scores = {"study": 0.0, "entertainment": 0.0}
     total = 0.0
     details = []

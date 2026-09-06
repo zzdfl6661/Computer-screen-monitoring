@@ -11,19 +11,31 @@
 │  客户端 main.py（桌面）  │ ────────────────────────→ │  服务端（Docker Compose）       │
 │                        │   check_activity 上报      │  backend (FastAPI + uvicorn)  │
 │ · 前台进程 + 标题/URL判定  │ ←──────────────────────── │  db      (PostgreSQL 15)      │
-│ · 仅“不确定”样本上传截图   │   响应/警告/反馈          │ · JWT 设备认证                 │
-│ · 弹警告窗（连续3次一致）  │                          │ · 视觉兜底: POST /analyze_image│
+│ · 每 60 秒独立截图采样     │   响应/警告/规则          │ · JWT 设备认证                 │
+│ · 可爱自绘提醒（连续触发） │                          │ · 视觉兜底: POST /analyze_image│
 │ · 零模型（无下载）        │                          │   (三信号融合: 进程+标题+OCR)  │
 └────────────────────────┘                          │ · 家长看板 http://localhost:5000│
                                                     └──────────────────────────────┘
 ```
 
 要点：
-- **客户端零模型**：识别依赖「前台进程 + 窗口标题 + 浏览器 URL(best-effort) + 家长覆盖规则」（无 onnxruntime / pytesseract 下载）；截屏采用 **Windows GDI**（ctypes + numpy），零第三方截屏库依赖。
-- **服务端视觉兜底**：仅当本地融合判定为「不确定」时，客户端上传一张 **768px JPEG 降采样截图** 到 `/analyze_image`，服务端融合 **前台进程 + 窗口标题 + OCR 文本** 三信号判级（详见「3. 服务端视觉分析」），**图片与 OCR 文本入库**（`image_analyses` 表）。截图低频、小图、仅模糊样本触发。
+- **客户端零模型**：识别依赖「数据库规则 + 前台进程 + 窗口标题 + 浏览器 URL(best-effort) + 家长覆盖规则」（无 onnxruntime / pytesseract 下载）；截屏采用 **Windows GDI**（ctypes + numpy），零第三方截屏库依赖。
+- **固定截图采样**：客户端每 **60 秒**独立截取前台窗口，压缩为长边 768px、质量 80 的 JPEG 后上传。该任务与主监控、提醒和 OCR 相互独立，网络异常会在下一轮重试而不会阻塞监控。
+- **服务端视觉兜底**：当本地融合仍为「不确定」时，客户端还会按视觉节流上传截图到 `/analyze_image`，服务端融合 **前台进程 + 窗口标题 + OCR 文本** 三信号判级。固定采样截图与 OCR 分析记录分别保存。
 - 原客户端 ONNX 视觉模型（`mobilenetv3-lite.onnx`）已**下线**（下载地址 404），视觉能力统一收归服务端。
 
 ## 核心功能
+
+### 当前版本：固定截图、数据库规则与动态提醒
+
+- **每分钟截图留存**：无论当前判为学习、娱乐或未知，客户端都会独立采样一次前台窗口。图片以 JPEG 二进制写入 PostgreSQL `screenshots` 表（不是 Base64），同时记录设备、时间、进程、窗口标题、分类、置信度与可选人工标注；默认保留 **7 天**。
+- **截图时间轴**：看板在活动日志前提供“打开截图时间轴”入口。时间轴在独立的大尺寸弹窗中展示缩略图，支持刷新、按当前设备查看、查看原图和元数据，并可将截图标为学习或娱乐，为后续视觉模型积累样本。
+- **统一数据库规则**：`classification_rules` 是客户端与服务端 OCR 共用的规则来源。规则按“进程精确匹配 → 域名 → 标题/OCR”优先级参与判定，客户端每 5 分钟刷新缓存；断网时继续使用已下载缓存和本地兜底。
+- **预置范围**：首次启动会幂等补齐常见游戏平台、游戏进程、视频/音乐客户端、社交和直播站点、IDE、办公/阅读工具、开发者文档、编程练习、在线课程与论文检索站点。已有数据库规则不会被覆盖、删除或重复写入。
+- **OCR 的角色**：标题文字不是 OCR。只有规则仍不能可靠分类时才会触发 OCR 视觉兜底；OCR 会与进程和窗口标题共同判断，且通用界面词（如“学习”“娱乐”）不会单独成为高置信度结论。
+- **动态提醒**：娱乐判定连续触发时只显示一个非阻塞的自绘提醒卡片：弹性进场、轻微漂浮与倒计时；点击“知道了”或按 `Esc` 收起，超时后缓慢淡出上移。
+
+> 看板不展示内部“分类规则”管理表，避免把内部实现当作唯一判定逻辑；规则继续保存在数据库中并被客户端和 OCR 服务使用。
 
 ### 1. 学习/娱乐分类（置信度感知融合 + 分层信号）
 
@@ -69,7 +81,7 @@
                     └─ 本地 VLM（enable_vlm，默认关，可选升级路径）
 ```
 
-> 说明：**服务端 OCR 是唯一真正上线的视觉能力**（默认开，仅在「不确定」样本触发，截图低频、小图、且入库 `image_analyses`）；本地 VLM 是可选升级。详见下文「3. 服务端视觉分析（OCR）」。
+> 说明：**服务端 OCR 是唯一真正上线的视觉识别能力**（默认开，仅在「不确定」样本触发）；此外每分钟固定采样截图保存到 `screenshots`，用于看板回看和后续人工标注。本地 VLM 是可选升级。
 
 ### 2. JWT 设备认证
 - 设备自动注册/登录，`/check_activity`、`/analyze_image` 均需设备令牌（未认证返回 401）。
@@ -83,13 +95,15 @@
 - **统计范围选择器**：今天 / 最近 7 天 / 最近 30 天 / 全部历史，一键联动统计卡、饼图、趋势与日志表，支持查看历史。
 - **日期筛选**：开始/结束日期默认填充当天日期，避免只显示浏览器的 `yyyy/mm/日` 占位符。
 - **判定上下文**：日志表显示前台进程和窗口标题，方便核对 Codex、浏览器、终端等是否被误判。
+- **截图时间轴**：活动日志前提供独立入口；点击后打开大尺寸时间轴弹窗，浏览最近 7 天按设备保存的截图、放大原图并查看进程、标题、分类与时间。
 - **未归类诊断**：unknown 不再占据主统计和饼图，只在折叠诊断区显示；有明确进程/标题的记录会自动归一化。
 - **未知活动标注（标注飞轮）**：系统判不出（unknown）的界面以「进程/标题 + 出现次数」列出，家长点「学习/娱乐」即生成**个性化覆盖规则**（`classification_overrides` 表，重复标注递增 hit_count），客户端下次拉取后权威覆盖判定。这是规则系统追不上的长尾（孩子自装应用）的兜底，也是家长闭环修正的入口。
+- “反馈核验”卡片已从看板移除；当前以 unknown 诊断、截图人工标注和数据库规则持续改善识别。
 - 当前看板与 `/api/*` 默认**公开**（局域网内可访问），如需登录保护可后续接入 user 体系。
 
 ### 5. 数据与隐私
-- 数据入库：`activity_logs`（每次判定）、`image_analyses`（视觉分析+截图哈希+OCR 文本）、`feedback`（误报/漏报反馈）、`classification_overrides`（家长标注覆盖规则）。
-- 数据保留策略：默认 30 天自动清理 `activity_logs` / `feedback` / `image_analyses`（可调）。
+- 数据入库：`activity_logs`（每次判定）、`image_analyses`（OCR 分析结果）、`screenshots`（每分钟 JPEG 采样及元数据）、`feedback`（兼容历史接口）、`classification_rules`（统一分类规则）、`classification_overrides`（家长标注覆盖规则）。
+- 数据保留策略：默认 30 天自动清理活动/视觉分析等记录；`screenshots` 独立按默认 **7 天**自动清理。
 - 敏感配置（`device_token`/`access_token`）用 cryptography(Fernet) 加密存储；HTTPS 可选（`--ssl`）。
 
 ### 6. 结构化日志
@@ -114,8 +128,8 @@
    仅作为诊断字段，不再混入家长要看的学习/娱乐结果。服务启动时会把有明确进程/标题证据的历史
    unknown 归一化为 study/entertainment，并纠正明确生产力进程被 OCR 写成 entertainment 的历史记录。
 6. **隐私与权限**：设置 `ADMIN_PASSWORD` 后看板与 `/api/*` 需登录（`/login` 密码门，
-   HttpOnly Cookie，24h）；截图默认只存 SHA-256 哈希，`STORE_IMAGE_RAW=1` 才存原始
-   base64；日志带 `device_id` 支持设备隔离筛选。
+   HttpOnly Cookie，24h）；固定采样截图以 JPEG 二进制保存 7 天，日志带 `device_id`
+   支持设备隔离筛选。
 7. **接口健壮性**：`/analyze_image` 校验图片格式/尺寸、DB 失败回滚；`/check_activity`
    与 `/analyze_image` 按设备限流（60/min、12/min）；客户端 401 重试改为有限次数循环。
 8. **数据库自动迁移**：启动时对旧库补齐新增列（SQLite/PostgreSQL 均支持），无需手动重建。
@@ -136,9 +150,9 @@
 - **unknown 可诊断**：`activity_logs` 新增 `process/title` 列，客户端随上报携带；
   新增 `GET /api/unknown-top?days=&limit=` 聚合 unknown 的进程/标题 TOP N，定向补规则。
 - **看板实时更新**：`/api/search` 支持 `since_id` 增量拉取；看板每 **10 秒**统一刷新
-  统计/饼图/趋势/反馈/日志（日志增量追加到表格顶部，切换时段/设备时全量重拉）；
+  统计/饼图/趋势/日志（日志增量追加到表格顶部，切换时段/设备时全量重拉）；
   卡片标题显示"上次刷新：HH:MM:SS"。
-- **反馈核验**：看板新增误报/漏报统计与明细（`GET /api/feedback`）。
+- **反馈核验**：`GET /api/feedback` 历史接口保留兼容，但反馈核验卡片已从看板移除。
 - **移除弹窗误报/漏报按钮**：孩子不会给准确反馈，弹窗只保留"确定"；`feedback` 表与
   接口保留供家长端/程序化使用。
 - **修改后必须重新构建镜像**：`docker compose up -d --build`（容器内旧代码不会自动更新；
@@ -219,12 +233,15 @@ python fastapi_server.py
 │   ├── vision.py               # 服务端视觉：三信号融合（OCR+进程+标题）
 │   ├── auth/                   # JWT 认证（注册/登录/依赖）
 │   ├── routes/                 # activity / stats / distribution / trend /
-│   │                           # search / feedback / privacy / vision / label
+│   │                           # search / privacy / vision / screenshots / rules / label
+│   ├── rule_engine.py          # PostgreSQL 分类规则预置、缓存与匹配
 │   ├── utils/classification.py # unknown 归一化与生产力进程误报保护
 │   └── utils/data_retention.py # 数据保留清理（含 image_analyses）
 │
 ├── client_package/             # 客户端模块
-│   ├── classify.py             # 核心分类：进程+标题+URL+覆盖规则 融合
+│   ├── classify.py             # 核心分类：数据库规则+进程+标题+URL+覆盖规则融合
+│   ├── screenshots.py          # 每分钟截图采样、压缩与异步上传
+│   ├── rule_cache.py           # 服务端分类规则缓存与离线回退
 │   ├── overrides.py            # 家长覆盖规则拉取与匹配（标注飞轮客户端侧）
 │   ├── browser_url.py          # 浏览器 URL 读取（UIA，可选依赖，best-effort）
 │   ├── vlm_classifier.py       # 视觉兜底（server 分支：上传截图；ollama 分支可选）
@@ -257,6 +274,8 @@ python fastapi_server.py
 | `fusion_margin` | 0.05 | 「不确定」前两名最小差距 |
 | `enable_server_vision` | true | 服务端 OCR 视觉兜底（仅不确定样本） |
 | `vision_min_interval` | 5 | 视觉兜底最小间隔（秒，节流截图上送频率） |
+| 固定截图采样 | 60 秒 | 独立任务；不受 `unknown`、OCR 或提醒状态影响，上传失败在下一轮重试 |
+| 数据库规则缓存 | 5 分钟 | 客户端拉取 `classification_rules` 的刷新间隔；断网保留最近一次成功缓存 |
 | `enable_text_llm` / `enable_vlm` | false | 本地 LLM / 端侧 VLM（可选） |
 | `site_reputation` / `study_keywords` / `entertainment_keywords` | […] | 站点声誉与关键词 |
 | `url_path_rules` | {…} | 两栖站路径细分规则（zhihu `/question`→study 等，URL 可读时生效） |
@@ -270,6 +289,10 @@ python fastapi_server.py
 | GET | `/docs` | Swagger 文档 | 公开 |
 | POST | `/check_activity` | 客户端上报判定 | 设备令牌 |
 | POST | `/analyze_image` | 服务端视觉分析（RapidOCR 三信号融合，图片入库） | 设备令牌 |
+| POST | `/api/screenshots` | 客户端上传固定采样截图（JPEG Base64 传输，服务端以二进制保存） | 设备令牌 |
+| GET | `/api/screenshots` | 看板分页读取最近 7 天截图（可按设备过滤） | 公开 |
+| GET | `/api/screenshots/{id}/image` | 流式读取单张截图 | 公开 |
+| PUT | `/api/screenshots/{id}/vision-label` | 为截图写入人工学习/娱乐标注 | 公开 |
 | GET | `/api/stats?days=` | 统计（`days`：1/7/30/0=全部） | 公开 |
 | GET | `/api/distribution?days=` | 学习/娱乐分布 | 公开 |
 | GET | `/api/trend?hours=` | 时间趋势 | 公开 |
@@ -279,6 +302,8 @@ python fastapi_server.py
 | POST | `/api/label` | 家长标注 unknown 样本 → 生成覆盖规则 | 公开 |
 | GET | `/api/overrides` | 客户端拉取覆盖规则（按设备过滤） | 公开 |
 | POST | `/api/overrides/{id}/toggle` | 停用/启用一条覆盖规则 | 公开 |
+| GET | `/api/classification-rules` | 客户端读取启用的统一分类规则 | 公开 |
+| POST/PUT/DELETE | `/api/classification-rules...` | 分类规则内部维护接口（看板默认不展示） | 公开 |
 | POST | `/auth/device/register` `/auth/device/login` | 设备注册/登录 | 公开 |
 
 ## 常用命令
@@ -303,7 +328,7 @@ python verify_vision.py         # 视觉链路（需服务端在跑）
 ## 注意事项
 
 1. 客户端必须原生运行在被监控电脑上（需屏幕/进程访问），不支持容器化；`main.py` 持续循环，`Ctrl+C` 停止。
-2. **服务端视觉兜底默认开启**（`enable_server_vision`）：仅「不确定」样本上传 768px 降采样截图，图片入库并受数据保留策略约束（默认 30 天）。
+2. **服务端视觉兜底默认开启**（`enable_server_vision`）：仅「不确定」样本走 OCR；此外固定采样任务每 60 秒上传一张 768px JPEG，截图二进制独立保存并默认保留 7 天。
 3. 看板与 `/api/*` 默认公开访问；如需登录保护，可后续接入 `users` 账号体系。
 4. `.env`、`config.json`、`*.db`、`logs/`、`.encryption_key` 均已 gitignore，勿提交。
 5. 数据库：Docker 部署用 PostgreSQL（数据卷 `postgres_data` 持久）；本地直接运行 `fastapi_server.py` 用 SQLite（仅开发）。

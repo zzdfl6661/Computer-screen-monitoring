@@ -31,6 +31,9 @@ _MIGRATIONS = {
     "image_analyses": [
         ("image_hash", "VARCHAR(64)"),
     ],
+    "screenshots": [
+        ("vision_label", "VARCHAR(32)"),
+    ],
 }
 
 # 兼容旧库：image_base64 由 NOT NULL 放宽为可空（截图默认不再入库，只存哈希）。
