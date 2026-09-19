@@ -9,7 +9,8 @@ from .config import ConfigManager
 from .http_client import session
 
 _context_lock = threading.Lock()
-_context = {"activity": None, "confidence": None, "process": None, "window_title": None}
+_context = {"activity": None, "confidence": None, "process": None, "window_title": None,
+            "subject": None}
 
 
 def update_capture_context(**values):

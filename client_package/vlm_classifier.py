@@ -43,6 +43,7 @@ class VLMClassifier:
         self.model = self.cfg.get('vlm_model') or 'moondream'
         self.backend = self.cfg.get('vlm_backend') or 'ollama'
         self.server_url = self.cfg.get('server_url') or 'http://127.0.0.1:5000/check_activity'
+        self.subject = None  # 服务端返回的学科细分（仅 study 时可能有值）
 
     def classify(self, image):
         try:
@@ -94,6 +95,7 @@ class VLMClassifier:
 
     def _classify_server(self, image):
         """上传降采样截图到服务端 /analyze_image，由服务端 OCR+规则判级并入库。"""
+        self.subject = None
         b64 = self._encode_jpg_b64(image)
         if not b64:
             return (None, 0.0)
@@ -118,6 +120,7 @@ class VLMClassifier:
         activity = data.get('activity')
         confidence = float(data.get('confidence') or 0.0)
         if activity in ('study', 'entertainment', 'idle', 'unknown'):
+            self.subject = data.get('subject') or None
             return (activity, confidence)
         return (None, 0.0)
 

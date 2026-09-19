@@ -11,6 +11,7 @@ from ..auth.models import Device
 from ..utils.rate_limit import rate_limiter
 from ..utils.time import now_local_iso
 from ..utils.classification import normalize_unknown, guard_productivity_result
+from ..vision import classify_subject
 from logger import setup_logger
 
 router = APIRouter()
@@ -26,6 +27,7 @@ class ActivityCheckRequest(BaseModel):
     reason: Optional[str] = None           # 原因码
     process: Optional[str] = None          # 前台进程名（unknown 诊断用）
     title: Optional[str] = None            # 窗口标题（unknown 诊断用）
+    subject: Optional[str] = Field(default=None, max_length=32)  # 学科细分（仅 study）
 
 
 class ActivityCheckResponse(BaseModel):
@@ -70,9 +72,16 @@ def check_activity(
         decision_source = request.decision_source
     reason = normalized_reason or request.reason
 
+    # 学科细分：客户端带了就用客户端的；没带且判为学习时，服务端用标题兜底推一次
+    subject = request.subject
+    if activity == 'study' and not subject:
+        subject, _ = classify_subject(request.title or '')
+    elif activity != 'study':
+        subject = None
+
     logger.info(f"收到活动检查请求: activity={activity}, device={device.device_name}, "
                 f"conf={confidence}, source={decision_source}, reason={reason}, "
-                f"process={request.process!r}, title={request.title!r}")
+                f"process={request.process!r}, title={request.title!r}, subject={subject!r}")
 
     new_log = ActivityLog(
         timestamp=now_local_iso(),
@@ -85,6 +94,7 @@ def check_activity(
         reason=reason,
         process=request.process,
         title=request.title,
+        subject=subject,
     )
     try:
         db.add(new_log)

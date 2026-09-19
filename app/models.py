@@ -23,6 +23,7 @@ class ActivityLog(Base):
     reason = Column(String, nullable=True)             # 原因码
     process = Column(String, nullable=True)            # 前台进程名（诊断 unknown 用）
     title = Column(String, nullable=True)              # 窗口标题（诊断 unknown 用）
+    subject = Column(String(32), nullable=True)        # 学科细分（仅 study：math/programming/...）
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -67,6 +68,9 @@ class ImageAnalysis(Base):
     confidence = Column(Float, nullable=True)
     window_title = Column(String, nullable=True)
     process = Column(String, nullable=True)
+    subject = Column(String(32), nullable=True)          # 学科细分（仅 study）
+    vlm_label = Column(String(32), nullable=True)        # VLM 兜底判级结果（study/entertainment/...）
+    vlm_raw = Column(Text, nullable=True)                # VLM 原始输出（JSON：confidence/reason）
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -89,6 +93,7 @@ class Screenshot(Base):
     confidence = Column(Float, nullable=True)
     process = Column(String(128), nullable=True)
     window_title = Column(String(512), nullable=True)
+    subject = Column(String(32), nullable=True)       # 学科细分（仅 study）
     vision_label = Column(String(32), nullable=True)  # 后续 VLM / 人工标注的数据沉淀
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
@@ -108,6 +113,7 @@ class ClassificationRule(Base):
     pattern = Column(String(512), nullable=False)
     priority = Column(Integer, nullable=False, default=100)
     enabled = Column(Integer, nullable=False, default=1)
+    origin = Column(String(32), nullable=True)  # 规则来源：manual(默认) / seed / vlm（VLM 兜底沉淀）
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

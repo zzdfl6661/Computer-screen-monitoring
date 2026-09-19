@@ -27,12 +27,20 @@ _MIGRATIONS = {
         ("reason", "VARCHAR(64)"),
         ("process", "VARCHAR(128)"),
         ("title", "VARCHAR(512)"),
+        ("subject", "VARCHAR(32)"),
     ],
     "image_analyses": [
         ("image_hash", "VARCHAR(64)"),
+        ("subject", "VARCHAR(32)"),
+        ("vlm_label", "VARCHAR(32)"),
+        ("vlm_raw", "TEXT"),
     ],
     "screenshots": [
         ("vision_label", "VARCHAR(32)"),
+        ("subject", "VARCHAR(32)"),
+    ],
+    "classification_rules": [
+        ("origin", "VARCHAR(32)"),
     ],
 }
 

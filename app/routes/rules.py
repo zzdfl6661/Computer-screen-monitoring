@@ -33,7 +33,8 @@ def _validate(payload: RulePayload):
 def _item(row: ClassificationRule):
     return {"id": row.id, "activity": row.activity, "signal_type": row.signal_type,
             "match_type": row.match_type, "pattern": row.pattern, "priority": row.priority,
-            "enabled": row.enabled, "updated_at": row.updated_at.isoformat() if row.updated_at else None}
+            "enabled": row.enabled, "origin": row.origin or "manual",
+            "updated_at": row.updated_at.isoformat() if row.updated_at else None}
 
 
 @router.get("/classification-rules")

@@ -11,7 +11,7 @@ from .auth import admin as admin_auth
 from .auth.models import User, Device
 from .utils.data_retention import start_auto_cleanup, cleanup_old_data
 from .utils.classification import normalize_existing_unknowns, correct_productivity_misclassifications
-from .vision import active_ocr_engine
+from .vision import active_ocr_engine, SUBJECT_LABELS
 from .rule_engine import seed_default_rules
 from logger import setup_logger
 
@@ -94,6 +94,8 @@ def index(request: Request, db: Session = Depends(get_db)):
             'reason': log.reason,
             'process': log.process,
             'title': log.title,
+            'subject': log.subject,
+            'subject_label': SUBJECT_LABELS.get(log.subject or '', '') if log.subject else '',
         }
         for log in activity_log
     ]

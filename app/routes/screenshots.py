@@ -27,6 +27,7 @@ class ScreenshotUpload(BaseModel):
     process: Optional[str] = None
     activity: Optional[str] = None
     confidence: Optional[float] = None
+    subject: Optional[str] = None
 
 
 def _decode_image(value: str):
@@ -65,6 +66,7 @@ def upload_screenshot(
         confidence=payload.confidence,
         process=(payload.process or "")[:128] or None,
         window_title=(payload.window_title or "")[:512] or None,
+        subject=(payload.subject or "")[:32] or None,
         created_at=datetime.utcnow(),
     )
     db.add(row)
@@ -93,7 +95,8 @@ def list_screenshots(
             "id": r.id, "device_id": r.device_id, "created_at": r.created_at.isoformat(),
             "width": r.width, "height": r.height, "activity": r.activity,
             "confidence": r.confidence, "process": r.process, "window_title": r.window_title,
-            "vision_label": r.vision_label, "image_url": f"/api/screenshots/{r.id}/image",
+            "subject": r.subject, "vision_label": r.vision_label,
+            "image_url": f"/api/screenshots/{r.id}/image",
         } for r in rows],
         "next_before_id": rows[-1].id if rows else None,
     }

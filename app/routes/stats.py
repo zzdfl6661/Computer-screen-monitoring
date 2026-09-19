@@ -8,6 +8,7 @@ from ..models import ActivityLog
 from ..auth.models import Device
 from ..utils.duration import compute_minutes
 from ..utils.time import now_local
+from ..vision import SUBJECT_LABELS
 
 router = APIRouter()
 
@@ -55,6 +56,23 @@ def get_stats(
         ActivityLog.timestamp.asc()).all()
     minutes = compute_minutes(rows)
 
+    # 学科分布：仅 study 样本，按 subject 聚合采样次数与近似时长。
+    # compute_minutes 以"相邻同值连续区间"算时长，把 subject 当作活动键复用即可。
+    subj_rows = base.filter(ActivityLog.activity == 'study').with_entities(
+        ActivityLog.timestamp, ActivityLog.subject).order_by(ActivityLog.timestamp.asc()).all()
+    from collections import Counter
+    subject_counts = Counter(s for _, s in subj_rows if s)
+    subject_minutes = compute_minutes([(ts, s or '') for ts, s in subj_rows])
+    subject_distribution = [
+        {
+            'subject': subj,
+            'label': SUBJECT_LABELS.get(subj, subj),
+            'count': count,
+            'minutes': subject_minutes.get(subj, 0.0),
+        }
+        for subj, count in sorted(subject_counts.items(), key=lambda kv: -kv[1])
+    ]
+
     return {
         'study_count': study_count,
         'entertainment_count': entertainment_count,
@@ -66,6 +84,7 @@ def get_stats(
         'entertainment_minutes': minutes.get('entertainment', 0.0),
         'idle_minutes': minutes.get('idle', 0.0),
         'unknown_minutes': minutes.get('unknown', 0.0),
+        'subject_distribution': subject_distribution,
     }
 
 

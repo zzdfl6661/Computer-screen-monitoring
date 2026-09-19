@@ -80,6 +80,7 @@ def search_logs(
             'reason': log.reason,
             'process': log.process,
             'title': log.title,
+            'subject': log.subject,
         }
         for log in results
     ]

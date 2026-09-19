@@ -48,7 +48,7 @@ def login_device(_retried_registration=False):
         if not device_token:
             logger.warning("设备注册失败，使用本地模式")
             return None
-    
+
     login_url = config_manager.get('server_url').replace('/check_activity', '/auth/device/login')
     try:
         response = session.post(login_url, json={"device_token": device_token}, timeout=5)
@@ -98,7 +98,7 @@ def _local_fallback(activity_type):
 
 
 def send_to_server(activity_type, confidence=None, decision_source=None, reason=None,
-                   process=None, title=None):
+                   process=None, title=None, subject=None):
     url = config_manager.get('server_url')
     access_token = config_manager.get('access_token')
 
@@ -121,6 +121,8 @@ def send_to_server(activity_type, confidence=None, decision_source=None, reason=
         payload["process"] = process
     if title:
         payload["title"] = title
+    if subject:
+        payload["subject"] = subject
 
     # 有限次数重试（401 时重新登录后最多再试 1 次），避免无限递归
     for attempt in range(2):

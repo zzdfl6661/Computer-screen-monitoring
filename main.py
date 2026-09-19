@@ -46,7 +46,8 @@ def main():
                         f"source={meta['decision_source']}, reason={meta['reason']}, "
                         f"process={meta.get('process')!r}, title={meta.get('title')!r})")
             update_capture_context(activity=activity_type, confidence=meta['confidence'],
-                                   process=meta.get('process'), window_title=meta.get('title'))
+                                   process=meta.get('process'), window_title=meta.get('title'),
+                                   subject=meta.get('subject'))
 
             result_queue.append(activity_type)
 
@@ -64,6 +65,7 @@ def main():
                 reason=meta['reason'],
                 process=meta.get('process'),
                 title=meta.get('title'),
+                subject=meta.get('subject'),
             )
             logger.info(f"响应: {response}")
 

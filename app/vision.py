@@ -13,8 +13,11 @@
 """
 import base64
 import io
+import json
 import logging
+import os
 import re
+import urllib.request
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +113,96 @@ STUDY_KEYWORDS = [
 AMBIGUOUS_SITE_TOKENS = set(SITE_REPUTATION.get("ambiguous", []))
 # 这些词常出现在本系统自己的看板、提示和导航中，单独出现不是内容分类证据。
 GENERIC_OCR_UI_TOKENS = {"学习", "娱乐", "活动", "状态", "监控", "提醒", "继续"}
+
+# ---- 学科分类（subject）：对已判为 study 的文本再细分学科 ----
+# 只收"能指认学科"的词，通用学习词（课程/作业/学习…）不进表；负向短语先剔除，
+# 避免"历史记录/浏览历史"这类 UI 词把网页误标成历史学科。
+SUBJECT_KEYWORDS = {
+    "math": [
+        "数学", "函数", "方程", "几何", "代数", "微积分", "导数", "三角函数",
+        "正弦", "余弦", "正切", "概率", "统计", "数列", "向量", "不等式",
+        "因式分解", "二次函数", "圆锥曲线", "立体几何", "线性代数", "高等数学", "奥数",
+        "math", "mathematics", "algebra", "geometry", "calculus", "trigonometry",
+        "arithmetic", "equation", "probability", "wolfram", "geogebra", "desmos",
+    ],
+    "programming": [
+        "编程", "代码", "程序设计", "算法", "数据结构", "前端", "后端", "全栈",
+        "机器学习", "深度学习", "人工智能",
+        "python", "java", "javascript", "typescript", "c++", "c#", "golang",
+        "rust", "php", "ruby", "swift", "kotlin", "html", "css", "sql", "mysql",
+        "mongodb", "redis", "git", "github", "gitlab", "leetcode", "力扣",
+        "linux", "docker", "kubernetes", "numpy", "pandas", "django", "flask",
+        "spring", "vue", "react", "node", "npm", "pip", "scratch",
+    ],
+    "chinese": [
+        "语文", "文言文", "古诗文", "古诗", "阅读理解", "作文", "造句", "拼音",
+        "汉字", "成语", "病句", "修辞", "散文", "记叙文", "议论文", "唐诗",
+        "宋词", "诗歌鉴赏", "名著导读", "现代文",
+    ],
+    "english": [
+        "英语", "英文", "grammar", "vocabulary", "ielts", "toefl",
+        "四级", "六级", "雅思", "托福", "新概念", "口语", "听力", "语法", "单词",
+    ],
+    "physics": [
+        "物理", "力学", "电磁", "光学", "热学", "声学", "电路", "牛顿定律",
+        "相对论", "physics", "mechanics", "electromagnetism",
+    ],
+    "chemistry": [
+        "化学", "元素周期表", "分子式", "化学方程", "有机化学", "无机化学",
+        "滴定", "chemistry", "chemical",
+    ],
+    "biology": [
+        "生物", "细胞", "基因", "光合作用", "呼吸作用", "遗传", "生态系统",
+        "新陈代谢", "biology", "genetics", "dna", "rna",
+    ],
+    "history": [
+        "历史", "历史课", "朝代", "古代史", "近代史", "现代史", "世界史",
+        "中国史", "辛亥革命", "工业革命", "文艺复兴", "history",
+    ],
+    "geography": [
+        "地理", "地图", "经纬度", "经度", "纬度", "气候", "地形", "板块",
+        "洋流", "geography",
+    ],
+    "politics": [
+        "政治", "思想品德", "道德与法治", "哲学", "马原", "毛概",
+    ],
+}
+
+# 命中前先从文本中剔除：这些 UI 复合词包含学科关键字，但不是学科内容
+SUBJECT_NEGATIVE_PHRASES = ["历史记录", "浏览历史", "清除历史", "搜索历史", "历史版本"]
+
+SUBJECT_LABELS = {
+    "math": "数学", "programming": "编程", "chinese": "语文", "english": "英语",
+    "physics": "物理", "chemistry": "化学", "biology": "生物", "history": "历史",
+    "geography": "地理", "politics": "政治",
+}
+
+
+def classify_subject(text: str):
+    """按学科关键词带权打分，返回 (subject, confidence)；无信号或平手返回 (None, 0.0)。
+
+    subject 取值见 SUBJECT_KEYWORDS 的键（math/programming/chinese/...），
+    展示名见 SUBJECT_LABELS。仅供 activity=study 的记录细分，不影响主判定。
+    """
+    if not text:
+        return (None, 0.0)
+    low = text.lower()
+    for phrase in SUBJECT_NEGATIVE_PHRASES:
+        low = low.replace(phrase, " ")
+    scores = {}
+    for subject, keywords in SUBJECT_KEYWORDS.items():
+        hits = [k for k in keywords if match_token(low, k)]
+        if hits:
+            scores[subject] = len(hits)
+    if not scores:
+        return (None, 0.0)
+    ranked = sorted(scores.items(), key=lambda kv: (-kv[1], kv[0]))
+    best, best_score = ranked[0]
+    second_score = ranked[1][1] if len(ranked) > 1 else 0
+    if best_score <= second_score:
+        return (None, 0.0)  # 两个学科命中数打平 → 学科不明确
+    conf = best_score / (best_score + second_score)
+    return (best, round(min(conf, 0.95), 3))
 
 # ---- 生产力工具与开发终端规则（服务端融合用）----
 
@@ -373,3 +466,115 @@ def ocr_bytes(data: bytes, lang: str = "chi_sim+eng") -> str:
 
 def decode_base64_image(b64: str) -> bytes:
     return base64.b64decode(b64)
+
+
+# ---- 云端多模态兜底（VLM）：OCR 无文字/判不出的界面，用看图判定补齐 ----
+# 配置走环境变量（未配置 VLM_API_KEY 时整条路径自动关闭，行为与旧版一致）：
+#   VLM_API_KEY   必填才启用；GLM/Qwen/OpenAI 兼容接口均可
+#   VLM_BASE_URL  默认智谱 https://open.bigmodel.cn/api/paas/v4（glm-4v-flash 免费）
+#   VLM_MODEL     默认 glm-4v-flash
+#   VLM_TIMEOUT   单次请求超时秒数，默认 25
+BROWSER_PROCESS_HINTS = [
+    "chrome", "chromium", "msedge", "edge", "firefox", "opera", "brave",
+    "vivaldi", "browser", "360se", "360chrome", "qqbrowser", "sogouexplorer",
+    "liebao", "iexplore", "maxthon",
+]
+# 同名冲突进程（java 既是 IDE 也是 Minecraft）：不能按进程沉淀规则，只按标题
+AMBIGUOUS_VLM_PROC_HINTS = ["java", "javaw", "origin"]
+
+VLM_PROMPT = (
+    "你是青少年电脑使用监控的判定助手。请根据这张电脑屏幕截图判断使用者当前"
+    "在学习还是娱乐。玩游戏（包括没有文字的全屏游戏画面）、看娱乐视频、刷短视频、"
+    "聊天、听歌属于 entertainment；上课、写作业、看教材课件、编程、查资料属于 study；"
+    "锁屏/纯桌面/待机属于 idle；画面确实无法判断时用 unknown。"
+    "只输出一个 JSON 对象，不要输出其他内容："
+    '{"activity": "study|entertainment|idle|unknown", '
+    '"confidence": 0到1的小数, '
+    '"subject": "math|programming|chinese|english|physics|chemistry|biology|'
+    'history|geography|politics 或 null（仅 study 时填写）", '
+    '"reason": "不超过20字的中文理由"}'
+)
+
+
+def vlm_configured() -> bool:
+    return bool(os.getenv("VLM_API_KEY", "").strip())
+
+
+def classify_vlm(image_bytes: bytes, window_title: str = None, process: str = None):
+    """云端多模态 API 判级（OpenAI 兼容 /chat/completions 协议）。
+
+    返回 (activity, confidence, raw_content)；未配置、请求失败或输出不可解析时
+    返回 (None, 0.0, 错误说明)。调用方需自行做缓存与节流控制成本。
+    """
+    api_key = os.getenv("VLM_API_KEY", "").strip()
+    if not api_key or not image_bytes:
+        return (None, 0.0, "vlm_not_configured")
+    base_url = (os.getenv("VLM_BASE_URL") or "https://open.bigmodel.cn/api/paas/v4").rstrip("/")
+    model = os.getenv("VLM_MODEL") or "glm-4v-flash"
+    timeout = float(os.getenv("VLM_TIMEOUT") or "25")
+
+    b64 = base64.b64encode(image_bytes).decode("ascii")
+    hint = ""
+    if process or window_title:
+        hint = f"\n辅助信息（仅供参考，以画面为准）——前台进程: {process or '未知'}，窗口标题: {window_title or '无'}"
+    payload = {
+        "model": model,
+        "messages": [{
+            "role": "user",
+            "content": [
+                {"type": "image_url",
+                 "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+                {"type": "text", "text": VLM_PROMPT + hint},
+            ],
+        }],
+        "temperature": 0.1,
+        "max_tokens": 300,
+    }
+    req = urllib.request.Request(
+        base_url + "/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        content = (data["choices"][0].get("message") or {}).get("content") or ""
+    except Exception as exc:
+        logger.warning("VLM 判定失败: %s", exc)
+        return (None, 0.0, f"vlm_error:{exc}")
+
+    activity, confidence, subject = _parse_vlm_content(content)
+    if activity is None:
+        logger.warning("VLM 输出不可解析: %r", content[:200])
+        return (None, 0.0, "vlm_unparseable")
+    return (activity, confidence, json.dumps(
+        {"activity": activity, "confidence": confidence, "subject": subject,
+         "reason": content}, ensure_ascii=False))
+
+
+def _parse_vlm_content(content: str):
+    """从 VLM 回复中稳健提取 JSON（容忍 markdown 代码块/前后缀文本）。"""
+    text = (content or "").strip()
+    if "```" in text:  # 去掉 ```json ... ``` 围栏
+        parts = text.split("```")
+        text = max(parts, key=len) if len(parts) > 1 else text
+        text = text.replace("json", "", 1).strip()
+    start, end = text.find("{"), text.rfind("}")
+    if start < 0 or end <= start:
+        return (None, 0.0, None)
+    try:
+        obj = json.loads(text[start:end + 1])
+    except ValueError:
+        return (None, 0.0, None)
+    activity = obj.get("activity")
+    if activity not in ("study", "entertainment", "idle", "unknown"):
+        return (None, 0.0, None)
+    try:
+        confidence = max(0.0, min(1.0, float(obj.get("confidence") or 0.0)))
+    except (TypeError, ValueError):
+        confidence = 0.0
+    subject = obj.get("subject")
+    if subject not in SUBJECT_KEYWORDS:
+        subject = None
+    return (activity, round(confidence, 3), subject)

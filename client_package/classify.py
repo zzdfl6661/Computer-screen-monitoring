@@ -185,6 +185,88 @@ def _match_token(text, token):
     return token in text
 
 
+# ---------------------------------------------------------------------------
+# 学科细分（subject）：判为 study 后再按学科关键词打分，供看板统计学习内容构成。
+# 词表与服务端 app/vision.py 保持一致；config.json 的 subject_keywords 可整表覆盖。
+# ---------------------------------------------------------------------------
+DEFAULT_SUBJECT_KEYWORDS = {
+    "math": [
+        "数学", "函数", "方程", "几何", "代数", "微积分", "导数", "三角函数",
+        "正弦", "余弦", "正切", "概率", "统计", "数列", "向量", "不等式",
+        "因式分解", "二次函数", "圆锥曲线", "立体几何", "线性代数", "高等数学", "奥数",
+        "math", "mathematics", "algebra", "geometry", "calculus", "trigonometry",
+        "arithmetic", "equation", "probability", "wolfram", "geogebra", "desmos",
+    ],
+    "programming": [
+        "编程", "代码", "程序设计", "算法", "数据结构", "前端", "后端", "全栈",
+        "机器学习", "深度学习", "人工智能",
+        "python", "java", "javascript", "typescript", "c++", "c#", "golang",
+        "rust", "php", "ruby", "swift", "kotlin", "html", "css", "sql", "mysql",
+        "mongodb", "redis", "git", "github", "gitlab", "leetcode", "力扣",
+        "linux", "docker", "kubernetes", "numpy", "pandas", "django", "flask",
+        "spring", "vue", "react", "node", "npm", "pip", "scratch",
+    ],
+    "chinese": [
+        "语文", "文言文", "古诗文", "古诗", "阅读理解", "作文", "造句", "拼音",
+        "汉字", "成语", "病句", "修辞", "散文", "记叙文", "议论文", "唐诗",
+        "宋词", "诗歌鉴赏", "名著导读", "现代文",
+    ],
+    "english": [
+        "英语", "英文", "grammar", "vocabulary", "ielts", "toefl",
+        "四级", "六级", "雅思", "托福", "新概念", "口语", "听力", "语法", "单词",
+    ],
+    "physics": [
+        "物理", "力学", "电磁", "光学", "热学", "声学", "电路", "牛顿定律",
+        "相对论", "physics", "mechanics", "electromagnetism",
+    ],
+    "chemistry": [
+        "化学", "元素周期表", "分子式", "化学方程", "有机化学", "无机化学",
+        "滴定", "chemistry", "chemical",
+    ],
+    "biology": [
+        "生物", "细胞", "基因", "光合作用", "呼吸作用", "遗传", "生态系统",
+        "新陈代谢", "biology", "genetics", "dna", "rna",
+    ],
+    "history": [
+        "历史", "历史课", "朝代", "古代史", "近代史", "现代史", "世界史",
+        "中国史", "辛亥革命", "工业革命", "文艺复兴", "history",
+    ],
+    "geography": [
+        "地理", "地图", "经纬度", "经度", "纬度", "气候", "地形", "板块",
+        "洋流", "geography",
+    ],
+    "politics": [
+        "政治", "思想品德", "道德与法治", "哲学", "马原", "毛概",
+    ],
+}
+
+# 命中前先剔除：这些 UI 复合词包含学科关键字，但不是学科内容（如"历史记录"）
+SUBJECT_NEGATIVE_PHRASES = ["历史记录", "浏览历史", "清除历史", "搜索历史", "历史版本"]
+
+
+def detect_subject(text):
+    """按学科关键词打分返回 subject（math/programming/...）；无信号或打平返回 None。"""
+    keywords = _cfg('subject_keywords', None) or DEFAULT_SUBJECT_KEYWORDS
+    if not text:
+        return None
+    low = text.lower()
+    for phrase in SUBJECT_NEGATIVE_PHRASES:
+        low = low.replace(phrase, ' ')
+    scores = {}
+    for subject, kws in keywords.items():
+        hits = [k for k in kws if _match_token(low, k)]
+        if hits:
+            scores[subject] = len(hits)
+    if not scores:
+        return None
+    ranked = sorted(scores.items(), key=lambda kv: (-kv[1], kv[0]))
+    best, best_score = ranked[0]
+    second_score = ranked[1][1] if len(ranked) > 1 else 0
+    if best_score <= second_score:
+        return None  # 两个学科命中数打平 → 学科不明确
+    return best
+
+
 def _get_running_processes():
     try:
         import psutil
@@ -733,6 +815,7 @@ def multimodal_fusion_analysis(tesseract_available=False, return_meta=False):
     # 视觉兜底（服务端 OCR / 本地 VLM），带节流
     global _last_vision_ts
     vision_overridden = False
+    vision_subject = None
     if uncertain and (_cfg('enable_vlm', False) or _cfg('enable_server_vision', False)):
         now = time.time()
         if now - _last_vision_ts >= _VISION_MIN_INTERVAL:
@@ -751,6 +834,7 @@ def multimodal_fusion_analysis(tesseract_available=False, return_meta=False):
                     reason = 'vision_fallback'
                     uncertain = False
                     vision_overridden = True
+                    vision_subject = getattr(vlm, 'subject', None)
                     logger.info(f"视觉兜底判定: {vcat} (置信度 {vconf:.3f})")
             except Exception as e:
                 logger.error(f"VLM兜底失败: {e}")
@@ -767,6 +851,12 @@ def multimodal_fusion_analysis(tesseract_available=False, return_meta=False):
     breakdown['reason'] = reason
     breakdown['decision_source'] = decision_source
 
+    # 学科细分：仅 study 时计算；视觉兜底返回的 subject 优先（服务端看过 OCR 全文，
+    # 比窗口标题更准），否则用窗口标题本地兜底推一次。
+    subject = None
+    if activity == 'study':
+        subject = vision_subject or detect_subject(title)
+
     logger.info(f"融合结果: {activity} (决策置信度 {dconf}) 明细 {breakdown}")
     if return_meta:
         meta = {
@@ -777,6 +867,7 @@ def multimodal_fusion_analysis(tesseract_available=False, return_meta=False):
             'vision_overridden': vision_overridden,
             'process': fg,               # 前台进程（unknown 诊断用）
             'title': title,              # 窗口标题（unknown 诊断用）
+            'subject': subject,          # 学科细分（仅 study，可为 None）
         }
         return activity, meta
     return activity

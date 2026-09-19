@@ -111,6 +111,8 @@ def seed_default_rules(db: Session):
             seen.add(key)
     if additions:
         db.add_all(additions)
+        for row in additions:
+            row.origin = "seed"
         db.commit()
         invalidate()
     return len(additions)

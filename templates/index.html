@@ -179,6 +179,7 @@
                                 <th>ID</th>
                                 <th>时间戳</th>
                                 <th>活动</th>
+                                <th>学科</th>
                                 <th>消息</th>
                                 <th>置信度</th>
                                 <th>判定依据</th>
@@ -446,7 +447,7 @@
                 if (dev) url += (url.includes('?') ? '&' : '?') + `device=${encodeURIComponent(dev)}`;
                 const response = await fetch(url);
                 const data = await response.json();
-                
+
                 const seriesData = [];
                 if (data.study !== undefined) {
                     seriesData.push({ value: data.study, name: '学习' });
