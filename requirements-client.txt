@@ -1,5 +1,6 @@
 # 客户端（桌面监控程序 main.py）专用依赖
-# 说明：客户端零模型、无 onnxruntime / pytesseract（视觉兜底走服务端 OCR）。
+# 说明：客户端不依赖 PyTorch/onnxruntime/pytesseract；可选 EfficientNet-B0
+# 影子探针直接复用 OpenCV DNN，真正的视觉兜底仍走服务端 OCR。
 # 截屏改用 Windows GDI（ctypes+numpy），无第三方截屏库依赖。
 numpy>=1.26.0
 opencv-python>=4.8.0

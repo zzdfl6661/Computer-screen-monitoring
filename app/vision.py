@@ -19,6 +19,8 @@ import os
 import re
 import urllib.request
 
+from .vlm_prompt import CONTENT_TYPES, SCREEN_TYPES, build_vlm_prompt
+
 logger = logging.getLogger(__name__)
 
 try:
@@ -471,7 +473,7 @@ def decode_base64_image(b64: str) -> bytes:
 # ---- 云端多模态兜底（VLM）：OCR 无文字/判不出的界面，用看图判定补齐 ----
 # 配置走环境变量（未配置 VLM_API_KEY 时整条路径自动关闭，行为与旧版一致）：
 #   VLM_API_KEY   必填才启用；GLM/Qwen/OpenAI 兼容接口均可
-#   VLM_BASE_URL  默认智谱 https://open.bigmodel.cn/api/paas/v4（glm-4v-flash 免费）
+#   VLM_BASE_URL  默认智谱 https://open.bigmodel.cn/api/paas/v4（价格以平台为准）
 #   VLM_MODEL     默认 glm-4v-flash
 #   VLM_TIMEOUT   单次请求超时秒数，默认 25
 BROWSER_PROCESS_HINTS = [
@@ -482,53 +484,48 @@ BROWSER_PROCESS_HINTS = [
 # 同名冲突进程（java 既是 IDE 也是 Minecraft）：不能按进程沉淀规则，只按标题
 AMBIGUOUS_VLM_PROC_HINTS = ["java", "javaw", "origin"]
 
-VLM_PROMPT = (
-    "你是青少年电脑使用监控的判定助手。请根据这张电脑屏幕截图判断使用者当前"
-    "在学习还是娱乐。玩游戏（包括没有文字的全屏游戏画面）、看娱乐视频、刷短视频、"
-    "聊天、听歌属于 entertainment；上课、写作业、看教材课件、编程、查资料属于 study；"
-    "锁屏/纯桌面/待机属于 idle；画面确实无法判断时用 unknown。"
-    "只输出一个 JSON 对象，不要输出其他内容："
-    '{"activity": "study|entertainment|idle|unknown", '
-    '"confidence": 0到1的小数, '
-    '"subject": "math|programming|chinese|english|physics|chemistry|biology|'
-    'history|geography|politics 或 null（仅 study 时填写）", '
-    '"reason": "不超过20字的中文理由"}'
-)
-
-
 def vlm_configured() -> bool:
     return bool(os.getenv("VLM_API_KEY", "").strip())
 
 
-def classify_vlm(image_bytes: bytes, window_title: str = None, process: str = None):
+def classify_vlm(image_bytes, window_title: str = None, process: str = None,
+                 url: str = None):
     """云端多模态 API 判级（OpenAI 兼容 /chat/completions 协议）。
 
     返回 (activity, confidence, raw_content)；未配置、请求失败或输出不可解析时
     返回 (None, 0.0, 错误说明)。调用方需自行做缓存与节流控制成本。
     """
     api_key = os.getenv("VLM_API_KEY", "").strip()
-    if not api_key or not image_bytes:
+    images = image_bytes if isinstance(image_bytes, (list, tuple)) else [image_bytes]
+    images = [item for item in images if item]
+    if not api_key or not images:
         return (None, 0.0, "vlm_not_configured")
     base_url = (os.getenv("VLM_BASE_URL") or "https://open.bigmodel.cn/api/paas/v4").rstrip("/")
     model = os.getenv("VLM_MODEL") or "glm-4v-flash"
     timeout = float(os.getenv("VLM_TIMEOUT") or "25")
 
-    b64 = base64.b64encode(image_bytes).decode("ascii")
-    hint = ""
-    if process or window_title:
-        hint = f"\n辅助信息（仅供参考，以画面为准）——前台进程: {process or '未知'}，窗口标题: {window_title or '无'}"
+    content = []
+    for image in images:
+        b64 = base64.b64encode(image).decode("ascii")
+        content.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:{_image_media_type(image)};base64,{b64}"},
+        })
+    content.append({
+        "type": "text",
+        "text": build_vlm_prompt(
+            process=process, window_title=window_title, url=url,
+            frame_count=len(images),
+        ),
+    })
     payload = {
         "model": model,
         "messages": [{
             "role": "user",
-            "content": [
-                {"type": "image_url",
-                 "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
-                {"type": "text", "text": VLM_PROMPT + hint},
-            ],
+            "content": content,
         }],
         "temperature": 0.1,
-        "max_tokens": 300,
+        "max_tokens": 500,
     }
     req = urllib.request.Request(
         base_url + "/chat/completions",
@@ -548,33 +545,61 @@ def classify_vlm(image_bytes: bytes, window_title: str = None, process: str = No
     if activity is None:
         logger.warning("VLM 输出不可解析: %r", content[:200])
         return (None, 0.0, "vlm_unparseable")
-    return (activity, confidence, json.dumps(
-        {"activity": activity, "confidence": confidence, "subject": subject,
-         "reason": content}, ensure_ascii=False))
+    parsed = _extract_vlm_object(content) or {}
+    parsed.update({"activity": activity, "confidence": confidence, "subject": subject})
+    return (activity, confidence, json.dumps(parsed, ensure_ascii=False))
 
 
-def _parse_vlm_content(content: str):
-    """从 VLM 回复中稳健提取 JSON（容忍 markdown 代码块/前后缀文本）。"""
+def _image_media_type(raw: bytes) -> str:
+    if raw.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if raw.startswith(b"RIFF") and raw[8:12] == b"WEBP":
+        return "image/webp"
+    return "image/jpeg"
+
+
+def _extract_vlm_object(content: str):
+    """从回复中提取并规范化完整 JSON，保留可审计证据字段。"""
     text = (content or "").strip()
-    if "```" in text:  # 去掉 ```json ... ``` 围栏
+    if "```" in text:
         parts = text.split("```")
         text = max(parts, key=len) if len(parts) > 1 else text
         text = text.replace("json", "", 1).strip()
     start, end = text.find("{"), text.rfind("}")
     if start < 0 or end <= start:
-        return (None, 0.0, None)
+        return None
     try:
         obj = json.loads(text[start:end + 1])
-    except ValueError:
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(obj, dict):
+        return None
+    if obj.get("activity") not in ("study", "entertainment", "idle", "unknown"):
+        return None
+    if obj.get("screen_type") not in SCREEN_TYPES:
+        obj["screen_type"] = "uncertain"
+    if obj.get("content") not in CONTENT_TYPES:
+        obj["content"] = "other"
+    for field in ("visual_evidence", "context_evidence"):
+        value = obj.get(field)
+        obj[field] = [str(item)[:100] for item in value[:5]] if isinstance(value, list) else []
+    obj["conflict"] = bool(obj.get("conflict", False))
+    obj["needs_review"] = bool(obj.get("needs_review", False))
+    obj["reason"] = str(obj.get("reason") or "")[:60]
+    return obj
+
+
+def _parse_vlm_content(content: str):
+    """从 VLM 回复中稳健提取 JSON（容忍 markdown 代码块/前后缀文本）。"""
+    obj = _extract_vlm_object(content)
+    if obj is None:
         return (None, 0.0, None)
-    activity = obj.get("activity")
-    if activity not in ("study", "entertainment", "idle", "unknown"):
-        return (None, 0.0, None)
+    activity = obj["activity"]
     try:
         confidence = max(0.0, min(1.0, float(obj.get("confidence") or 0.0)))
     except (TypeError, ValueError):
         confidence = 0.0
     subject = obj.get("subject")
-    if subject not in SUBJECT_KEYWORDS:
+    if activity != "study" or subject not in SUBJECT_KEYWORDS:
         subject = None
     return (activity, round(confidence, 3), subject)

@@ -13,16 +13,16 @@
 │ · 前台进程 + 标题/URL判定  │ ←──────────────────────── │  db      (PostgreSQL 15)      │
 │ · 每 60 秒独立截图采样     │   响应/警告/规则          │ · JWT 设备认证                 │
 │ · 可爱自绘提醒（连续触发） │                          │ · 视觉兜底: POST /analyze_image│
-│ · 零模型（无下载）        │                          │   (三信号融合: 进程+标题+OCR)  │
+│ · OpenCV DNN 轻量影子探针 │                          │   (三信号融合: 进程+标题+OCR)  │
 └────────────────────────┘                          │ · 家长看板 http://localhost:5000│
                                                     └──────────────────────────────┘
 ```
 
 要点：
-- **客户端零模型**：识别依赖「数据库规则 + 前台进程 + 窗口标题 + 浏览器 URL(best-effort) + 家长覆盖规则」（无 onnxruntime / pytesseract 下载）；截屏采用 **Windows GDI**（ctypes + numpy），零第三方截屏库依赖。
+- **客户端轻量视觉基座**：项目内置 EfficientNet-B0 ImageNet ONNX（约 21MB 权重），直接复用现有 OpenCV DNN 推理，无需 PyTorch/onnxruntime。它默认关闭且只记录 Top-K 物体类别，尚不参与学习/娱乐判定。
 - **固定截图采样**：客户端每 **60 秒**独立截取前台窗口，压缩为长边 768px、质量 80 的 JPEG 后上传。该任务与主监控、提醒和 OCR 相互独立，网络异常会在下一轮重试而不会阻塞监控。
 - **服务端视觉兜底**：当本地融合仍为「不确定」时，客户端还会按视觉节流上传截图到 `/analyze_image`，服务端融合 **前台进程 + 窗口标题 + OCR 文本** 三信号判级。固定采样截图与 OCR 分析记录分别保存。
-- 原客户端 ONNX 视觉模型（`mobilenetv3-lite.onnx`）已**下线**（下载地址 404），视觉能力统一收归服务端。
+- 旧 `mobilenetv3-lite.onnx` 下载链路已下线；新 EfficientNet-B0 使用可追溯的官方预训练资产，但其 ImageNet 权重没有“游戏/非游戏”输出层，必须用真实截图标注集微调并验证后才能成为判定信号。
 
 ## 核心功能
 
@@ -33,6 +33,7 @@
 - **统一数据库规则**：`classification_rules` 是客户端与服务端 OCR 共用的规则来源。规则按“进程精确匹配 → 域名 → 标题/OCR”优先级参与判定，客户端每 5 分钟刷新缓存；断网时继续使用已下载缓存和本地兜底。
 - **预置范围**：首次启动会幂等补齐常见游戏平台、游戏进程、视频/音乐客户端、社交和直播站点、IDE、办公/阅读工具、开发者文档、编程练习、在线课程与论文检索站点。已有数据库规则不会被覆盖、删除或重复写入。
 - **OCR 的角色**：标题文字不是 OCR。只有规则仍不能可靠分类时才会触发 OCR 视觉兜底；OCR 会与进程和窗口标题共同判断，且通用界面词（如“学习”“娱乐”）不会单独成为高置信度结论。
+- **EfficientNet-B0 影子探针**：`enable_efficientnet_probe` 默认关闭；开启后只在不确定样本上输出 ImageNet Top-K 和耗时到日志，不覆盖 OCR、规则或最终活动。测试脚本和合成游戏画面保存在 `eval/`，用于确认模型文件与 OpenCV 推理链路可用。
 - **动态提醒**：娱乐判定连续触发时只显示一个非阻塞的自绘提醒卡片：弹性进场、轻微漂浮与倒计时；点击“知道了”或按 `Esc` 收起，超时后缓慢淡出上移。
 
 > 看板不展示内部“分类规则”管理表，避免把内部实现当作唯一判定逻辑；规则继续保存在数据库中并被客户端和 OCR 服务使用。
@@ -56,7 +57,7 @@
 - **未知归一化**：服务端收到 `unknown` 时，若前台进程/标题有明确生产力或娱乐证据，会写回 `study`/`entertainment`；只有没有可靠证据的样本才保留 `unknown`。
 - **提醒去抖**：客户端连续 3 次判定为娱乐时才弹出提醒，减少窗口切换造成的瞬时误提醒；活动结果仍按每个检查周期上报。
 - **高 DPI 提醒窗**：客户端使用自绘高 DPI 卡片、清晰字体、确定按钮和 15 秒自动收起，避免默认 Tk 弹窗模糊。
-- **视觉兜底（后置覆盖，不参与加权融合）**：仅「不确定」样本触发——`enable_server_vision`（默认开）上传截图到服务端 OCR 判级，或 `enable_vlm`（默认关）本地 Ollama VLM；结果置信度 ≥ `confidence_threshold`（默认 0.45）时**直接采纳**为最终判定。**家长覆盖规则优先级高于视觉兜底**。
+- **视觉兜底（后置覆盖，不参与加权融合）**：仅「不确定」样本触发——`enable_server_vision`（默认开）先上传截图到服务端 OCR 判级；若服务端配置 `VLM_API_KEY` 且 OCR/规则仍无法判定，再调用云端多模态模型。云端结果达到 `VLM_ACCEPT_MIN_CONF`（默认 0.75）才覆盖 `unknown`。**家长覆盖规则优先级高于视觉兜底**。
 - 连续 3 次一致才弹提醒，减少误判。
 
 **完整判定流程（一图流）：**
@@ -75,20 +76,33 @@
         └─ 判定「不确定」（赢家分 < 0.40 或两可差距 < 0.05）
                ├─ 家长覆盖规则命中 → 权威覆盖（最高优先级，跳过视觉）
                └─ 视觉兜底（后置覆盖，不参与加权融合）
+                    ├─ EfficientNet-B0 影子探针（默认关）：ImageNet Top-K，仅诊断、不改判定
                     ├─ 服务端 OCR（enable_server_vision，默认开）：
                     │    RapidOCR 提取界面文字 + 前台进程 + 窗口标题三信号融合；生产力进程保护 OCR 结果
                     │    （权重 0.45/0.30/0.25）→ 置信度 ≥ 0.45 直接采纳
-                    └─ 本地 VLM（enable_vlm，默认关，可选升级路径）
+                    └─ 云端 VLM（服务端配置 API Key 后启用）：最多 3 帧 + 进程/标题/URL，带节流与缓存
 ```
 
-> 说明：**服务端 OCR 是唯一真正上线的视觉识别能力**（默认开，仅在「不确定」样本触发）；此外每分钟固定采样截图保存到 `screenshots`，用于看板回看和后续人工标注。本地 VLM 是可选升级。
+> 说明：服务端 OCR 默认开启；配置 `VLM_API_KEY` 后，云端 VLM 只在 OCR/规则仍为 `unknown` 时接手。EfficientNet-B0 是已接入但默认关闭的影子探针，公开 ImageNet 权重可以直接推理，却没有“游戏/视频/学习”业务输出，不能把 ImageNet Top-1 指标当成游戏识别准确率。每分钟固定采样截图保存到 `screenshots`，既供看板回看，也可作为后续训练和评测数据。
 
 ### 2. JWT 设备认证
 - 设备自动注册/登录，`/check_activity`、`/analyze_image` 均需设备令牌（未认证返回 401）。
 
 ### 3. 服务端视觉分析（OCR）
 - `POST /analyze_image`：收 base64 768px JPEG + 前台进程 + 窗口标题 → **RapidOCR（onnx，Tesseract 降级）** 提取界面文字 → **三信号融合判级**（前台进程 0.45 + 窗口标题 0.30 + OCR 文本 0.25，归一化后取最大类）→ 返回 `{activity, confidence, ocr_text}`，图片哈希与 OCR 文本写入 `image_analyses`。Codex/ChatGPT/Claude、终端和 Docker 等明确生产力进程不会被 OCR 中的“娱乐”字样覆盖。
-- 后续可平滑升级为 VLM（如 qwen2.5vl:3b）而不改客户端协议。
+- 云端 VLM 提示词集中在 `app/vlm_prompt.py`：区分交互游戏与“播放器里的游戏画面”，不因界面中单独出现“学习/娱乐”文字直接分类，并要求输出可审计的结构化 JSON。
+- 服务端从 `screenshots` 读取同设备、同进程的近期帧，与当前帧组成最多 3 张“旧→新”序列；同时传入进程、标题和去掉查询参数的 URL。低于阈值的模型结果只记录、不覆盖，默认也不自动生成数据库规则。
+
+#### 模型是否需要训练
+
+| 类型 | 能否直接运行 | 能否直接用于本项目最终判定 |
+|------|--------------|----------------------------|
+| EfficientNet-B0 / RepViT 通用分类权重 | 可以 | 不可以。只认识 ImageNet 等通用类别，需要用本项目截图微调出 `game/video/study/other` 分类头 |
+| X3D 通用动作权重 | 可以 | 不可以。它偏动作视频识别，仍需要连续帧数据与业务标签训练 |
+| MobileCLIP / TinyCLIP | 可以用文本提示零样本试跑 | 可以做候选或影子评测，但需用真实截图校准提示词、阈值与误报率 |
+| 多模态大模型 API | 可以，通常无需自行训练 | 可以作为 `unknown` 兜底；只需兼容接口的 API Key，但仍必须用真实截图评测，API 费用与许可按平台规则 |
+
+当前选择是“规则/OCR → 云端 VLM 兜底”，因此不要求先训练模型；将来若追求离线、低成本和稳定延迟，再用已标注截图微调轻量模型。
 
 ### 4. 家长可视化看板
 - `http://localhost:5000/`：统计卡（只统计已识别的学习/娱乐）、学习娱乐分布饼图、24h/48h/7天趋势折线图、活动日志表（可按活动/关键词/日期筛选）。
@@ -118,7 +132,7 @@
    `status=neutral`（不再是 ERROR），`unknown` 为合法状态；枚举外的输入直接返回 422。
 2. **不确定样本走视觉兜底**：只有存在前台界面但本地规则无法判级时才标记
    `unknown + uncertain` 并上传服务端 OCR；真正没有前台窗口/无标题桌面外壳仍是 `idle`，不截图；
-   `vision_min_interval` 默认 5s 节流，避免高频刷图。
+   `vision_min_interval` 默认 30s 节流，避免高频刷图。
 3. **区分 idle 与 unknown**：无前台或无标题的桌面外壳 → `idle`（原因码
    `no_foreground/desktop_shell`）；有界面但规则未命中（包括浏览器标题为空）→ `unknown`
    （原因码 `rules_uncovered`），并记录判定依据 `decision_source`。
@@ -188,7 +202,10 @@ DB_PASSWORD=your_secure_password
 DB_NAME=learning_app
 JWT_SECRET_KEY=your_jwt_secret_key_here
 APP_ENV=development
+# 可选：开启云端多模态兜底。不填时完全关闭。
+VLM_API_KEY=
 ```
+完整可调参数见 `.env.example`。使用默认智谱兼容接口时，只需填写对应的 `VLM_API_KEY`；更换 OpenAI 兼容服务时，再修改 `VLM_BASE_URL` 与 `VLM_MODEL`。
 2. 启动：
 ```bash
 docker compose up -d --build
@@ -245,6 +262,7 @@ python fastapi_server.py
 │   ├── overrides.py            # 家长覆盖规则拉取与匹配（标注飞轮客户端侧）
 │   ├── browser_url.py          # 浏览器 URL 读取（UIA，可选依赖，best-effort）
 │   ├── vlm_classifier.py       # 视觉兜底（server 分支：上传截图；ollama 分支可选）
+│   ├── efficientnet_classifier.py # OpenCV DNN + EfficientNet-B0 影子探针
 │   ├── llm_judge.py            # 本地文本 LLM（可选）
 │   ├── capture.py             # GDI 截屏（ctypes+numpy，零第三方依赖，优先截前台窗口）
 │   ├── report.py / ui.py / feedback.py / config.py
@@ -255,9 +273,12 @@ python fastapi_server.py
 │   ├── grid_search.py          # 融合参数网格搜索（结论：当前参数已在平台期）
 │   ├── samples.json / samples_v2.json / report.txt / grid_search_report.txt
 │   ├── smoke_test.py           # 离线健壮性冒烟
+│   ├── efficientnet_smoke.py    # EfficientNet-B0 本地 ONNX 推理冒烟
+│   ├── fixtures/synthetic_gameplay.png # 无真实游戏 IP 的合成测试图
 │   ├── cli_test.py             # 人工测试 CLI
 │   └── debug_process_signal.py # 进程信号诊断
 ├── verify_backend.py           # 后端链路冒烟（health/注册/登录/check_activity）
+├── models/efficientnet_b0/     # OpenCV 兼容 ONNX 权重、ImageNet 标签、来源与许可证
 ├── verify_vision.py            # 视觉链路冒烟（/analyze_image）
 └── stop_client.py              # 停止客户端进程
 ```
@@ -273,12 +294,30 @@ python fastapi_server.py
 | `fusion_min_confidence` | 0.40 | 「不确定」下限 |
 | `fusion_margin` | 0.05 | 「不确定」前两名最小差距 |
 | `enable_server_vision` | true | 服务端 OCR 视觉兜底（仅不确定样本） |
-| `vision_min_interval` | 5 | 视觉兜底最小间隔（秒，节流截图上送频率） |
+| `enable_efficientnet_probe` | false | EfficientNet-B0 影子探针；只写诊断日志，不改变活动分类 |
+| `vision_min_interval` | 30 | 视觉兜底最小间隔（秒，节流截图上送频率） |
 | 固定截图采样 | 60 秒 | 独立任务；不受 `unknown`、OCR 或提醒状态影响，上传失败在下一轮重试 |
 | 数据库规则缓存 | 5 分钟 | 客户端拉取 `classification_rules` 的刷新间隔；断网保留最近一次成功缓存 |
 | `enable_text_llm` / `enable_vlm` | false | 本地 LLM / 端侧 VLM（可选） |
 | `site_reputation` / `study_keywords` / `entertainment_keywords` | […] | 站点声誉与关键词 |
 | `url_path_rules` | {…} | 两栖站路径细分规则（zhihu `/question`→study 等，URL 可读时生效） |
+
+## 云端 VLM 配置（服务端 `.env`）
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| `VLM_API_KEY` | 空 | 唯一必填项；为空时云端 VLM 完全关闭 |
+| `VLM_BASE_URL` / `VLM_MODEL` | 智谱兼容地址 / `glm-4v-flash` | 可替换成其他 OpenAI 兼容视觉服务 |
+| `VLM_ACCEPT_MIN_CONF` | 0.75 | 低于此置信度只记录，不覆盖 `unknown` |
+| `VLM_GLOBAL_MIN_SECONDS` | 60 | 整个服务两次真实调用之间的最短间隔 |
+| `VLM_KEY_RETRY_SECONDS` | 300 | 同进程、标题、URL 的最短重试间隔 |
+| `VLM_CACHE_TTL_HOURS` | 6 | 同上下文结果缓存时间 |
+| `VLM_MAX_IMAGES` | 3 | 单次最多发送的连续截图数（已限制为 1–3） |
+| `VLM_FRAME_LOOKBACK_SECONDS` | 180 | 从固定采样截图中寻找前序帧的时间范围 |
+| `VLM_REQUIRE_LOW_OCR` | 0 | `0`：所有 `unknown` 可触发；`1`：仅少文字界面触发 |
+| `VLM_AUTO_RULE_ENABLED` | 0 | 默认禁止模型自动写长期规则；开启后仍需达到高置信度和重复次数 |
+
+网址传给模型前会移除查询参数、fragment 与账号信息，避免把 token 等敏感参数送到第三方。截图仍会发往所配置的模型服务，部署前应确认平台的数据政策。
 
 ## API 端点
 
@@ -321,6 +360,8 @@ python main.py
 # 冒烟/回归
 python eval/run_eval.py         # 评测：旧 vs 新
 python eval/smoke_test.py       # 健壮性冒烟
+python eval/efficientnet_smoke.py # EfficientNet-B0 + OpenCV DNN 本地推理冒烟
+python eval/vlm_prompt_smoke.py  # VLM 提示词/多帧/阈值离线冒烟（不调用真实 API）
 python verify_backend.py        # 后端链路
 python verify_vision.py         # 视觉链路（需服务端在跑）
 ```
@@ -336,3 +377,5 @@ python verify_vision.py         # 视觉链路（需服务端在跑）
 ## 许可证
 
 MIT
+
+`models/efficientnet_b0` 中的 TorchVision 预训练权重按 BSD-3-Clause 许可分发，来源与完整许可见该目录的 `SOURCE.md` 和 `LICENSE`。

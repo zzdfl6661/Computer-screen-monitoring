@@ -5,8 +5,10 @@
   1. process  前台窗口所属进程名匹配（仅看前台；浏览器与 java 视为中性，交给标题判定）
   2. title    窗口标题 + 站点声誉（站点名/域名）语义判级
   3. text_llm 本地文本 LLM 判级（可选，pluggable，离线降级到规则）
-  4. server_vlm 服务端视觉兜底（enable_server_vision：仅对“不确定”样本上传降采样截图，
-     由服务端 OCR+规则判级；原客户端 ONNX 视觉模型已下线，不再下载）
+  4. efficientnet_probe 本地 EfficientNet-B0 影子探针（默认关，只记录 ImageNet Top-K，
+     没有 game/non-game 头，因此不参与最终判定）
+  5. server_vlm 服务端视觉兜底（enable_server_vision：仅对“不确定”样本上传降采样截图，
+     由服务端 OCR+规则判级）
 
 融合：每个信号贡献 = 权重 × 自身置信度；总证据归一化后 argmax + 置信度阈值。
 低置信 → 标记不确定 → 触发服务端视觉兜底；只有没有前台窗口或桌面外壳才返回 idle。
@@ -762,9 +764,9 @@ def multimodal_fusion_analysis(tesseract_available=False, return_meta=False):
     breakdown['url'] = (ucat, uconf, udetail)
 
     image = None
-    # 客户端视觉模型已下线（下载地址 404）：不再做本地 OCR/ONNX 识别，
-    # 视觉兜底统一走服务端（仅"不确定"样本上传截图，见下方 VLM/server_vision 分支）
-    breakdown['model'] = ('idle', 0.0, 'removed')
+    # EfficientNet-B0 仅作为可选影子探针：官方 ImageNet 权重没有 game/non-game
+    # 输出层，因此绝不直接改变活动分类。真正的视觉兜底仍由下方 OCR/VLM 完成。
+    breakdown['model'] = ('unknown', 0.0, 'efficientnet_probe_disabled')
 
     if _cfg('enable_text_llm', False):
         try:
@@ -824,6 +826,23 @@ def multimodal_fusion_analysis(tesseract_available=False, return_meta=False):
                 if image is None:
                     from .capture import capture_screen
                     image = capture_screen()
+                if _cfg('enable_efficientnet_probe', False):
+                    try:
+                        from .efficientnet_classifier import EfficientNetB0Probe
+                        probe = EfficientNetB0Probe().inspect(image, top_k=5)
+                        breakdown['model'] = (
+                            probe.game_classification,
+                            0.0,
+                            {'latency_ms': probe.latency_ms,
+                             'top_k': [item.label for item in probe.top_k]},
+                        )
+                        logger.info(
+                            "EfficientNet-B0 影子探针（不参与决策）: %s",
+                            breakdown['model'][2],
+                        )
+                    except Exception as probe_error:
+                        breakdown['model'] = ('unknown', 0.0, f'error:{probe_error}')
+                        logger.warning("EfficientNet-B0 影子探针失败: %s", probe_error)
                 vlm = VLMClassifier()
                 vcat, vconf = vlm.classify(image)
                 breakdown['vlm'] = (vcat, vconf, 'fallback')

@@ -89,9 +89,19 @@ class VLMClassifier:
     def _context(self):
         try:
             from .classify import get_active_window_title, _get_foreground_process
-            return get_active_window_title(), _get_foreground_process()
+            title, process = get_active_window_title(), _get_foreground_process()
+            current_url = None
+            if process and any(name in process.lower() for name in (
+                    'chrome', 'chromium', 'msedge', 'firefox', 'opera', 'brave',
+                    'vivaldi', '360se', '360chrome', 'qqbrowser', 'sogouexplorer')):
+                try:
+                    from .browser_url import get_browser_url
+                    current_url = get_browser_url()
+                except Exception as exc:
+                    logger.debug("视觉上下文读取浏览器 URL 失败: %s", exc)
+            return title, process, current_url
         except Exception:
-            return None, None
+            return None, None, None
 
     def _classify_server(self, image):
         """上传降采样截图到服务端 /analyze_image，由服务端 OCR+规则判级并入库。"""
@@ -105,8 +115,13 @@ class VLMClassifier:
             return (None, 0.0)
 
         url = self.server_url.replace('/check_activity', '/analyze_image')
-        title, proc = self._context()
-        payload = {"image": b64, "window_title": title, "process": proc}
+        title, proc, current_url = self._context()
+        payload = {
+            "image": b64,
+            "window_title": title,
+            "process": proc,
+            "url": current_url,
+        }
         req = urllib.request.Request(
             url,
             data=json.dumps(payload).encode('utf-8'),

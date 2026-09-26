@@ -96,6 +96,9 @@ class ConfigManager:
                 '学习计划', '学习目标', '学习进度', '学习笔记', '学习资料', '学习工具'
             ],
             'enable_server_vision': True,
+            # ImageNet-B0 影子探针：只记录 Top-K，不参与学习/娱乐判定。
+            # 等使用真实截图微调出 game/non-game 权重并完成验证后再启用决策。
+            'enable_efficientnet_probe': False,
             'vision_min_interval': 30,
         }
         

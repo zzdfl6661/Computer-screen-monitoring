@@ -12,6 +12,21 @@ services:
       - APP_TIMEZONE=Asia/Shanghai
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
       - STORE_IMAGE_RAW=${STORE_IMAGE_RAW:-0}
+      # 云端多模态兜底：只填 VLM_API_KEY 即可使用默认智谱兼容接口；未填时完全关闭。
+      - VLM_API_KEY=${VLM_API_KEY:-}
+      - VLM_BASE_URL=${VLM_BASE_URL:-https://open.bigmodel.cn/api/paas/v4}
+      - VLM_MODEL=${VLM_MODEL:-glm-4v-flash}
+      - VLM_TIMEOUT=${VLM_TIMEOUT:-25}
+      - VLM_ACCEPT_MIN_CONF=${VLM_ACCEPT_MIN_CONF:-0.75}
+      - VLM_GLOBAL_MIN_SECONDS=${VLM_GLOBAL_MIN_SECONDS:-60}
+      - VLM_KEY_RETRY_SECONDS=${VLM_KEY_RETRY_SECONDS:-300}
+      - VLM_CACHE_TTL_HOURS=${VLM_CACHE_TTL_HOURS:-6}
+      - VLM_MAX_IMAGES=${VLM_MAX_IMAGES:-3}
+      - VLM_FRAME_LOOKBACK_SECONDS=${VLM_FRAME_LOOKBACK_SECONDS:-180}
+      - VLM_REQUIRE_LOW_OCR=${VLM_REQUIRE_LOW_OCR:-0}
+      - VLM_AUTO_RULE_ENABLED=${VLM_AUTO_RULE_ENABLED:-0}
+      - VLM_RULE_MIN_CONF=${VLM_RULE_MIN_CONF:-0.90}
+      - VLM_RULE_CONFIRMATIONS=${VLM_RULE_CONFIRMATIONS:-2}
     depends_on:
       db:
         condition: service_healthy
